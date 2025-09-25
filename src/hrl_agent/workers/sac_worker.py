@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any
+from pathlib import Path
+from typing import Any, Sequence
 
 import numpy as np
 
@@ -35,12 +36,20 @@ class SACWorker:
         learning_rate: float = 3e-4,
         buffer_size: int = 100_000,
         learning_starts: int = 256,
+        log_formats: Sequence[str] | None = None,
+        default_log_dir: Path | str | None = None,
     ) -> None:
         self._model = model
         self._learning_rate = learning_rate
         self._buffer_size = buffer_size
         self._learning_starts = learning_starts
         self._steps = 0
+        self._log_formats = tuple(log_formats) if log_formats else ("stdout", "csv")
+        self._default_log_dir = (
+            Path(default_log_dir)
+            if default_log_dir is not None
+            else Path("artifacts") / "sb3" / "sac_worker"
+        )
         if spaces is not None:
             self._observation_space = observation_space or spaces.Box(
                 low=-1.0,
@@ -65,17 +74,18 @@ class SACWorker:
     def model(self) -> Any | None:
         return self._model
 
-    def load_from_path(self, path: str) -> None:
+    def load_from_path(self, path: str, *, log_dir: Path | str | None = None) -> None:
         if SAC is None:
             raise RuntimeError("stable-baselines3 is required to load SAC models")
         self._model = SAC.load(path)
+        self._configure_logger(log_dir)
 
     def save(self, path: str) -> None:
         if self._model is None:
             raise RuntimeError("Cannot save before attaching a model")
         self._model.save(path)
 
-    def build_default_model(self) -> None:
+    def build_default_model(self, *, log_dir: Path | str | None = None) -> None:
         if SAC is None:
             raise RuntimeError("stable-baselines3 is required to initialize SAC models")
         if gym is None or spaces is None:
@@ -114,9 +124,18 @@ class SACWorker:
             gradient_steps=1,
             verbose=0,
         )
-        if configure_logger is not None:
-            self._model.set_logger(configure_logger())
+        self._configure_logger(log_dir)
         self._steps = 0
+
+    def _configure_logger(self, log_dir: Path | str | None) -> None:
+        if configure_logger is None or self._model is None:
+            return
+
+        target_dir = Path(log_dir) if log_dir is not None else self._default_log_dir
+        target_dir.mkdir(parents=True, exist_ok=True)
+        logger = configure_logger(str(target_dir), list(self._log_formats))
+        self._model.set_logger(logger)
+        self._default_log_dir = target_dir
 
     def act(self, observation: Any, *, deterministic: bool = False) -> dict[str, float]:
         if self._model is None:

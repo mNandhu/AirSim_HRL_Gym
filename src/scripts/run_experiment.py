@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import argparse
 import json
-from typing import Any
+from pathlib import Path
+from typing import Any, Sequence
 
 from airsim_env.env import AirSimEnv
 from config.loader import load_experiment
@@ -12,9 +13,9 @@ from hrl_agent.coordination import CommandCoordinator
 from hrl_agent.manager.dqn_manager import CommandPolicy, DQNManager
 from hrl_agent.orchestrator import HRLOrchestrator
 from hrl_agent.workers.sac_worker import SACWorker
+from perception.detector import ModelLoadError, YoloDetector
 from perception.pipeline import PerceptionPipeline
 from perception.segmentation import SegmentationAdapter
-from perception.detector import ModelLoadError, YoloDetector
 from utils.airsim_runner import airsim_session
 from utils.artifacts import ArtifactManager
 
@@ -71,16 +72,38 @@ def _state_dict(distance: float, speed: float, *, progress_possible: bool = True
     }
 
 
-def _create_coordinator() -> CommandCoordinator:
+def _create_coordinator(
+    *,
+    log_root: Path | str | None = None,
+    log_formats: Sequence[str] | None = None,
+) -> CommandCoordinator:
     commands = [
         "FOLLOW_LANE",
         "TURN_LEFT_AT_INTERSECTION",
         "TURN_RIGHT_AT_INTERSECTION",
         "STOP",
     ]
+    base_log_root = Path(log_root) if log_root is not None else Path("artifacts") / "sb3"
+    manager_log_dir = base_log_root / "manager"
+    workers_log_root = base_log_root / "workers"
+
     policy = CommandPolicy(commands=commands)
-    manager = DQNManager(policy)
-    workers = {command: SACWorker() for command in commands}
+    manager = DQNManager(
+        policy,
+        log_formats=log_formats,
+        default_log_dir=manager_log_dir,
+    )
+    manager.build_default_model(log_dir=manager_log_dir)
+
+    workers = {}
+    for command in commands:
+        worker_log_dir = workers_log_root / command.lower()
+        worker = SACWorker(
+            log_formats=log_formats,
+            default_log_dir=worker_log_dir,
+        )
+        worker.build_default_model(log_dir=worker_log_dir)
+        workers[command] = worker
     return CommandCoordinator(manager, workers)
 
 
@@ -102,7 +125,7 @@ def main(argv: list[str] | None = None) -> int:
     experiment = load_experiment(args.config)
 
     artifact_manager = ArtifactManager(args.output)
-    artifact_manager.start_run(str(experiment.id))
+    paths = artifact_manager.start_run(str(experiment.id))
     artifact_manager.write_json(
         "experiment.json",
         experiment.model_dump() if hasattr(experiment, "model_dump") else experiment.__dict__,
@@ -113,7 +136,7 @@ def main(argv: list[str] | None = None) -> int:
         simulator = AirSimSimulatorAdapter(client, horizon=experiment.horizon)
         perception = _build_perception(client, args.camera_name, args.detector_model)
         env = AirSimEnv(experiment, simulator=simulator, perception=perception)
-        coordinator = _create_coordinator()
+        coordinator = _create_coordinator(log_root=paths.logs_dir / "sb3")
         orchestrator = HRLOrchestrator(env, coordinator)
         result = orchestrator.run_episode(
             max_steps=args.max_steps, deterministic=args.deterministic

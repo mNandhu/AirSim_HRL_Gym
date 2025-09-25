@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Sequence
 
 import numpy as np
@@ -51,6 +52,8 @@ class DQNManager:
         learning_rate: float = 3e-4,
         buffer_size: int = 50_000,
         learning_starts: int = 128,
+        log_formats: Sequence[str] | None = None,
+        default_log_dir: Path | str | None = None,
     ) -> None:
         self._policy = policy
         self._model = model
@@ -58,6 +61,12 @@ class DQNManager:
         self._learning_rate = learning_rate
         self._learning_starts = learning_starts
         self._steps = 0
+        self._log_formats = tuple(log_formats) if log_formats else ("stdout", "csv")
+        self._default_log_dir = (
+            Path(default_log_dir)
+            if default_log_dir is not None
+            else Path("artifacts") / "sb3" / "dqn_manager"
+        )
         if spaces is not None:
             self._observation_space = observation_space or spaces.Box(
                 low=-1.0,
@@ -89,10 +98,11 @@ class DQNManager:
         self._model = model
         self._steps = 0
 
-    def load_from_path(self, path: str) -> None:
+    def load_from_path(self, path: str, *, log_dir: Path | str | None = None) -> None:
         if DQN is None:
             raise RuntimeError("stable-baselines3 is required to load DQN models")
         self._model = DQN.load(path)
+        self._configure_logger(log_dir)
         self._steps = 0
 
     def save(self, path: str) -> None:
@@ -103,7 +113,7 @@ class DQNManager:
     def set_policy(self, policy: CommandPolicy) -> None:
         object.__setattr__(self, "_policy", policy)
 
-    def build_default_model(self) -> None:
+    def build_default_model(self, *, log_dir: Path | str | None = None) -> None:
         if DQN is None:
             raise RuntimeError("stable-baselines3 is required to initialize DQN models")
         if gym is None or spaces is None:
@@ -142,9 +152,18 @@ class DQNManager:
             gradient_steps=1,
             verbose=0,
         )
-        if configure_logger is not None:
-            self._model.set_logger(configure_logger())
+        self._configure_logger(log_dir)
         self._steps = 0
+
+    def _configure_logger(self, log_dir: Path | str | None) -> None:
+        if configure_logger is None or self._model is None:
+            return
+
+        target_dir = Path(log_dir) if log_dir is not None else self._default_log_dir
+        target_dir.mkdir(parents=True, exist_ok=True)
+        logger = configure_logger(str(target_dir), list(self._log_formats))
+        self._model.set_logger(logger)
+        self._default_log_dir = target_dir
 
     def process_experience(
         self,

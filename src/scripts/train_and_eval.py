@@ -6,7 +6,7 @@ import argparse
 import math
 import time
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Sequence, cast
 
 import numpy as np
 
@@ -183,7 +183,11 @@ class AirSimSimulatorAdapter:
 
 
 def _create_coordinator(
-    *, load_models: bool = False, model_dir: str = "models"
+    *,
+    load_models: bool = False,
+    model_dir: str = "models",
+    log_root: Path | str | None = None,
+    log_formats: Sequence[str] | None = None,
 ) -> CommandCoordinator:
     """Create coordinator with optional pre-trained models."""
     commands = [
@@ -193,38 +197,50 @@ def _create_coordinator(
         "STOP",
     ]
 
+    base_log_root = Path(log_root) if log_root is not None else Path("artifacts") / "sb3"
+    manager_log_dir = base_log_root / "manager"
+    workers_log_root = base_log_root / "workers"
+
     policy = CommandPolicy(commands=commands)
-    manager = DQNManager(policy)
+    manager = DQNManager(
+        policy,
+        log_formats=log_formats,
+        default_log_dir=manager_log_dir,
+    )
 
     # Load or create DQN manager model
     if load_models:
         model_path = Path(model_dir) / "dqn_manager.zip"
         if model_path.exists():
-            manager.load_from_path(str(model_path))
+            manager.load_from_path(str(model_path), log_dir=manager_log_dir)
             print(f"Loaded DQN manager from {model_path}")
         else:
             print(f"No saved DQN manager found at {model_path}, creating new model")
-            manager.build_default_model()
+            manager.build_default_model(log_dir=manager_log_dir)
     else:
         # Create new DQN model for training
-        manager.build_default_model()
+        manager.build_default_model(log_dir=manager_log_dir)
 
     # Create workers
     workers = {}
     for command in commands:
-        worker = SACWorker()
+        worker_log_dir = workers_log_root / command.lower()
+        worker = SACWorker(
+            log_formats=log_formats,
+            default_log_dir=worker_log_dir,
+        )
 
         if load_models:
             worker_path = Path(model_dir) / f"sac_{command.lower()}.zip"
             if worker_path.exists():
-                worker.load_from_path(str(worker_path))
+                worker.load_from_path(str(worker_path), log_dir=worker_log_dir)
                 print(f"Loaded SAC worker {command} from {worker_path}")
             else:
                 print(f"No saved worker found at {worker_path}, creating new model")
-                worker.build_default_model()
+                worker.build_default_model(log_dir=worker_log_dir)
         else:
             # Create new SAC model for training
-            worker.build_default_model()
+            worker.build_default_model(log_dir=worker_log_dir)
 
         workers[command] = worker
 
@@ -256,7 +272,12 @@ def train_mode(args) -> int:
         perception = _build_perception(client, args.camera_name, args.detector_model)
         env = AirSimEnv(experiment, simulator=simulator, perception=perception)
 
-        coordinator = _create_coordinator(load_models=args.resume, model_dir=args.models)
+        sb3_log_root = run_paths.logs_dir / "sb3"
+        coordinator = _create_coordinator(
+            load_models=args.resume,
+            model_dir=args.models,
+            log_root=sb3_log_root,
+        )
         orchestrator = HRLOrchestrator(env, coordinator)
 
         # Training loop
@@ -344,7 +365,12 @@ def inference_mode(args) -> int:
         env = AirSimEnv(experiment, simulator=simulator, perception=perception)
 
         # Load trained models
-        coordinator = _create_coordinator(load_models=True, model_dir=args.models)
+        sb3_log_root = run_paths.logs_dir / "sb3"
+        coordinator = _create_coordinator(
+            load_models=True,
+            model_dir=args.models,
+            log_root=sb3_log_root,
+        )
         orchestrator = HRLOrchestrator(env, coordinator)
 
         print("🎮 Running trained model...")
