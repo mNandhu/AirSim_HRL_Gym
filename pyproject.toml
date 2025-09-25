@@ -8,17 +8,18 @@ version = "0.1.0"
 description = "Hierarchical reinforcement learning framework targeting AirSim"
 authors = [{ name = "AirSim HRL Team" }]
 readme = "README.md"
-requires-python = ">=3.12,<3.13"
+requires-python = ">=3.12"
 dependencies = [
-    "stable-baselines3==2.2.1",
-    "torch==2.2.1",
+    "airsim>=1.8.1",
+    "stable-baselines3[extra]>=2.7.0",
     "pydantic==2.7.1",
     "pyyaml==6.0.1",
     "pytest>=8.2.0",
-    "airsim>=1.8.1",
     "numpy>=2.3.3",
     "msgpack-rpc-python>=0.4.1",
     "python-dotenv>=1.1.1",
+    "backports-ssl-match-hostname>=3.7.0.1",
+    "torch>=2.8.0",
 ]
 
 [project.optional-dependencies]
