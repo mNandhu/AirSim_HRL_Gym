@@ -36,6 +36,7 @@ class StubSimulator:
                 "collision": False,
                 "lane_mask_coverage_ratio": 1.0,
                 "progress_possible": True,
+                "heading_deg": 0.0,
             },
             "image": np.zeros((3, 64, 64), dtype=np.float32),
         }
@@ -49,6 +50,7 @@ class StubSimulator:
                 "collision": False,
                 "lane_mask_coverage_ratio": 0.9,
                 "progress_possible": True,
+                "heading_deg": 0.0,
             },
             "image": np.zeros((3, 64, 64), dtype=np.float32),
         }
@@ -80,10 +82,9 @@ def test_observation_contains_expected_fields(experiment):
     assert observation.segmentation_mask.shape == (4, 4)
     assert observation.detections and observation.detections[0]["class_id"] == 1
     assert set(observation.reward_components) == {
-        "progress",
-        "lane_adherence",
-        "collision",
-        "command_completion",
+        "command_shaping",
+        "collision_penalty",
+        "completion_bonus",
         "idle_penalty",
     }
 

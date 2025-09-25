@@ -19,6 +19,10 @@ __all__ = ["CommandCoordinator", "CoordinatorState"]
 class CoordinatorState:
     command: str | None = None
     last_action: Mapping[str, float] | None = None
+    manager_features: np.ndarray | None = None
+    worker_features: np.ndarray | None = None
+    command_start_distance: float | None = None
+    command_start_heading: float | None = None
 
 
 class CommandCoordinator:
@@ -55,7 +59,17 @@ class CommandCoordinator:
 
         worker_input = self._adapt_features(features, self._worker_input_dim(worker))
         action = worker.act(worker_input, deterministic=deterministic)
-        self._state = CoordinatorState(command=command, last_action=action)
+        telemetry = self._extract_telemetry(observation)
+        start_distance = telemetry.get("distance_to_goal")
+        heading = telemetry.get("heading_deg")
+        self._state = CoordinatorState(
+            command=command,
+            last_action=action,
+            manager_features=command_input,
+            worker_features=worker_input,
+            command_start_distance=start_distance,
+            command_start_heading=heading,
+        )
         return command, action
 
     def update_command_policy(self, policy: CommandPolicy) -> None:
@@ -79,6 +93,83 @@ class CommandCoordinator:
         action = worker.act(worker_input, deterministic=deterministic)
         self._state = CoordinatorState(command=command, last_action=action)
         return command, action
+
+    def command_completed(self, observation: Any) -> bool:
+        if self._state.command is None or self._state.manager_features is None:
+            return False
+        telemetry = self._extract_telemetry(observation)
+        if not telemetry:
+            return False
+
+        command = self._state.command
+        speed = float(telemetry.get("speed_mps", 0.0))
+        distance = float(telemetry.get("distance_to_goal", 0.0))
+        heading = float(telemetry.get("heading_deg", 0.0))
+        start_distance = self._state.command_start_distance
+        start_heading = self._state.command_start_heading
+
+        completed = False
+        if command == "STOP":
+            completed = speed < 0.2
+        elif command == "FOLLOW_LANE":
+            if start_distance is not None:
+                completed = (start_distance - distance) >= 5.0
+        elif command == "TURN_LEFT_AT_INTERSECTION":
+            if start_heading is not None:
+                completed = self._signed_heading_delta(start_heading, heading) >= 70.0
+        elif command == "TURN_RIGHT_AT_INTERSECTION":
+            if start_heading is not None:
+                completed = self._signed_heading_delta(start_heading, heading) <= -70.0
+
+        return completed
+
+    def observe_transition(
+        self,
+        previous_observation: Any,
+        reward: float,
+        next_observation: Any,
+        *,
+        done: bool,
+    ) -> None:
+        if self._state.command is None or self._state.manager_features is None:
+            return
+
+        next_features = self._vectorize_observation(next_observation)
+        action_index = self._manager.policy.index_of(self._state.command)
+        self._manager.process_experience(
+            self._state.manager_features,
+            action_index,
+            reward,
+            next_features,
+            done,
+        )
+
+        last_action = self._state.last_action or {}
+        worker = self._workers.get(self._state.command)
+        if worker is not None and self._state.worker_features is not None:
+            worker_action = np.array(
+                [
+                    float(last_action.get("throttle", 0.0)),
+                    float(last_action.get("brake", 0.0)),
+                    float(last_action.get("steering", 0.0)),
+                ],
+                dtype=np.float32,
+            )
+            worker_features = self._state.worker_features
+            next_worker_features = self._adapt_features(
+                self._vectorize_observation(next_observation),
+                self._worker_input_dim(worker),
+            )
+            worker.process_experience(
+                worker_features,
+                worker_action,
+                reward,
+                next_worker_features,
+                done,
+            )
+
+    def reset(self) -> None:
+        self._state = CoordinatorState()
 
     def _vectorize_observation(self, observation: Any) -> np.ndarray:
         if isinstance(observation, ObservationPacket):
@@ -133,3 +224,20 @@ class CommandCoordinator:
         padded = np.zeros(expected_dim, dtype=flat.dtype)
         padded[: flat.size] = flat
         return padded
+
+    @staticmethod
+    def _extract_telemetry(observation: Any) -> Mapping[str, Any]:
+        if isinstance(observation, ObservationPacket):
+            return observation.telemetry
+        if isinstance(observation, Mapping):
+            return observation.get("telemetry", observation)
+        return {}
+
+    @staticmethod
+    def _heading_delta(start: float, current: float) -> float:
+        diff = (current - start + 180.0) % 360.0 - 180.0
+        return abs(diff)
+
+    @staticmethod
+    def _signed_heading_delta(start: float, current: float) -> float:
+        return (current - start + 180.0) % 360.0 - 180.0

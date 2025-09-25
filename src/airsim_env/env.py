@@ -2,18 +2,22 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+import math
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping
 from uuid import UUID
-import hashlib
-import json
+
+import numpy as np
 
 from config.experiment import ExperimentDefinition, SeedBundle
 from config.seeds import apply_seed_bundle
+
 from .observation import ObservationPacket, assemble_observation
-from .reward import RewardCalculator, RewardConfig
+from .reward import RewardCalculator, RewardConfig, VehicleState
 
 # Threshold for reaching the goal in meters
 _GOAL_THRESHOLD = 0.5
@@ -54,25 +58,27 @@ class AirSimEnv:
 
     def reset(self, seed_bundle: SeedBundle | None = None) -> ObservationPacket:
         bundle = seed_bundle or self._seed_bundle
-        apply_seed_bundle(bundle)
+        airsim_client = getattr(self._simulator, "client", None)
+        apply_seed_bundle(bundle, airsim_client=airsim_client)
         self._step_index = 0
 
         sim_state = self._simulator.reset(self._experiment)
         observation = self._build_observation(
             sim_state,
             reward_components={
-                "progress": 0.0,
-                "lane_adherence": float(
-                    sim_state["telemetry"].get("lane_mask_coverage_ratio", 0.0)
-                ),
-                "collision": 0.0,
-                "command_completion": 0.0,
+                "command_shaping": 0.0,
+                "collision_penalty": 0.0,
+                "completion_bonus": 0.0,
                 "idle_penalty": 0.0,
             },
             done_flags={"terminated": False, "truncated": False},
         )
         self._last_observation = observation
         return observation
+
+    @property
+    def last_observation(self) -> ObservationPacket | None:
+        return self._last_observation
 
     def step(
         self, action: Mapping[str, float]
@@ -120,9 +126,11 @@ class AirSimEnv:
         *,
         progress_possible: bool,
     ) -> tuple[dict[str, float], float]:
+        current_state = self._vehicle_state_from_telemetry(current, previous=previous)
+        active_command = self._command_context.name or ""
         components, total = self._reward_calculator.compute(
-            previous,
-            current,
+            current_state,
+            active_command=active_command,
             command_completed=self._command_context.completed,
             progress_possible=progress_possible,
         )
@@ -164,6 +172,51 @@ class AirSimEnv:
 
     def _check_truncated(self) -> bool:
         return self._step_index + 1 >= self._experiment.horizon
+
+    def _vehicle_state_from_telemetry(
+        self,
+        telemetry: Mapping[str, Any],
+        *,
+        previous: Mapping[str, Any] | None = None,
+    ) -> VehicleState:
+        speed = float(telemetry.get("speed_mps", 0.0))
+        collision = bool(telemetry.get("collision", False))
+        distance_to_goal = float(telemetry.get("distance_to_goal", 0.0))
+
+        if "lane_deviation_m" in telemetry:
+            lane_deviation = float(telemetry.get("lane_deviation_m", 0.0))
+        else:
+            lane_ratio = float(telemetry.get("lane_mask_coverage_ratio", 1.0))
+            lane_deviation = max(0.0, 1.0 - lane_ratio)
+
+        heading_deg = telemetry.get("heading_deg")
+        heading_rad = float(math.radians(heading_deg)) if heading_deg is not None else 0.0
+        forward_vector = np.array(
+            [math.cos(heading_rad), math.sin(heading_rad), 0.0], dtype=np.float32
+        )
+
+        vector_to_goal = telemetry.get("vector_to_goal")
+        if vector_to_goal is None and previous is not None:
+            vector_to_goal = previous.get("vector_to_goal")
+        if vector_to_goal is not None:
+            goal_vector = np.asarray(vector_to_goal, dtype=np.float32)
+        else:
+            goal_vector = forward_vector.copy()
+
+        norm = float(np.linalg.norm(goal_vector))
+        if norm > 1e-6:
+            goal_vector = goal_vector / norm
+        else:
+            goal_vector = forward_vector.copy()
+
+        return VehicleState(
+            speed_mps=speed,
+            collision=collision,
+            distance_to_goal=distance_to_goal,
+            distance_from_lane_center=lane_deviation,
+            forward_vector=forward_vector,
+            vector_to_next_waypoint=goal_vector,
+        )
 
 
 def _hash_experiment(experiment: ExperimentDefinition) -> str:

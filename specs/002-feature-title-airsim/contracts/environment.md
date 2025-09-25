@@ -40,24 +40,23 @@ FOLLOW_LANE, TURN_LEFT_AT_INTERSECTION, TURN_RIGHT_AT_INTERSECTION, STOP
 
 ## Reward Components (initial)
 
-| Component          | Description                                      | Sign | Initial Formula                                                             |
-| ------------------ | ------------------------------------------------ | ---- | --------------------------------------------------------------------------- |
-| progress           | Delta reduction in distance_to_goal              | +    | `prev_distance_to_goal - curr_distance_to_goal`                             |
-| lane_adherence     | Staying within drivable area                     | +    | `lane_mask_coverage_ratio`                                                  |
-| collision          | Collision penalty                                | -    | `-1.0 * int(collision_occurred)`                                            |
-| command_completion | Reward when command-specific objective achieved  | +    | `int(command_objective_met) * completion_bonus`                             |
-| idle_penalty       | Penalty for zero velocity when progress possible | -    | `-idle_penalty_coef * int(speed_mps < idle_threshold && progress_possible)` |
+| Component         | Description                                      | Sign | Initial Formula / Source                                                        |
+| ----------------- | ------------------------------------------------ | ---- | ------------------------------------------------------------------------------- |
+| command_shaping   | Dense reward combining progress & alignment      | ±    | `progress_velocity + lane/heading shaping` (varies per active command)          |
+| collision_penalty | Collision penalty                                | -    | `-collision_penalty * int(collision_occurred)`                                  |
+| completion_bonus  | Reward when command-specific objective achieved  | +    | `completion_bonus * int(command_objective_met)`                                 |
+| idle_penalty      | Penalty for zero velocity when progress possible | -    | `-idle_penalty_coef * int(speed_mps < idle_threshold_mps && progress_possible)` |
 
 ## Termination Conditions
 
-- distance_to_goal <= threshold
-- collision == True
-- step_count >= horizon
+-   distance_to_goal <= threshold
+-   collision == True
+-   step_count >= horizon
 
 ## Truncation Conditions
 
-- SimulatorSession failure mid-episode
-- Perception pipeline exhaustion / timeout
+-   SimulatorSession failure mid-episode
+-   Perception pipeline exhaustion / timeout
 
 ## Info Dictionary Keys
 
@@ -71,9 +70,9 @@ FOLLOW_LANE, TURN_LEFT_AT_INTERSECTION, TURN_RIGHT_AT_INTERSECTION, STOP
 
 ## Invariants
 
-- Reward computed only in `compute_reward`.
-- `step` must call `compute_reward` exactly once per environment transition.
-- No agent package imports.
+-   Reward computed only in `compute_reward`.
+-   `step` must call `compute_reward` exactly once per environment transition.
+-   No agent package imports.
 
 ## Versioning
 

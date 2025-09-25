@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import math
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
+
+import numpy as np
 
 from airsim_env.env import AirSimEnv
 from config.loader import load_experiment
@@ -21,25 +24,37 @@ from utils.artifacts import ArtifactManager
 
 try:
     import airsim
-    from stable_baselines3 import DQN, SAC
 except ImportError as e:
     print(f"Missing required dependency: {e}")
-    print("Install with: pip install airsim stable-baselines3")
+    print("Install with: pip install airsim")
+    exit(1)
+
+try:
+    import stable_baselines3  # type: ignore  # noqa: F401
+except ImportError as e:
+    print(f"Missing required dependency: {e}")
+    print("Install with: pip install stable-baselines3")
     exit(1)
 
 
 class AirSimSimulatorAdapter:
     """Real AirSim simulator adapter for training."""
 
-    def __init__(self, client: Any, *, horizon: int) -> None:
+    def __init__(self, client: Any, *, horizon: int, control_dt: float = 0.1) -> None:
         self._client = client
         self._step = 0
         self._horizon = horizon
         self._initial_pose = None
+        self._control_dt = control_dt
+        self._previous_velocity = None
+        self._previous_timestamp = None
+        self._goal_pose = None
+        self._accumulator_time = 0.0
 
     def reset(self, experiment) -> dict[str, Any]:
         self._step = 0
         pose = experiment.start_pose
+        self._goal_pose = experiment.goal_pose
 
         # Store initial pose for resets
         if self._initial_pose is None:
@@ -50,12 +65,27 @@ class AirSimSimulatorAdapter:
         orientation = airsim.to_quaternion(0, 0, pose.yaw)
         vehicle_pose = airsim.Pose(position, orientation)
 
+        try:
+            self._client.simPause(True)
+        except Exception:
+            pass
+
         self._client.simSetVehiclePose(vehicle_pose, True)
         self._client.reset()
-        time.sleep(0.5)  # Allow physics to settle
+
+        try:
+            self._client.simPause(False)
+        except Exception:
+            pass
+
+        self._accumulator_time = 0.0
 
         # Get initial state
         car_state = self._client.getCarState()
+        self._previous_velocity = _vector_from_airsim(
+            car_state.kinematics_estimated.linear_velocity
+        )
+        self._previous_timestamp = getattr(car_state, "timestamp", None)
         return self._build_state_dict(car_state, experiment)
 
     def step(self, action: dict[str, float]) -> dict[str, Any]:
@@ -70,7 +100,7 @@ class AirSimSimulatorAdapter:
         car_controls.steering = steering
 
         self._client.setCarControls(car_controls)
-        time.sleep(0.1)  # Control timestep
+        self._advance_simulation()
 
         self._step += 1
         car_state = self._client.getCarState()
@@ -84,18 +114,44 @@ class AirSimSimulatorAdapter:
 
         # Calculate distance to goal (if experiment provided)
         distance_to_goal = 999.0
-        if experiment:
+        goal_pose = getattr(experiment, "goal_pose", None) or self._goal_pose
+        if goal_pose is not None:
             pos = car_state.kinematics_estimated.position
-            goal = experiment.goal_pose
-            distance_to_goal = ((pos.x_val - goal.x) ** 2 + (pos.y_val - goal.y) ** 2) ** 0.5
+            distance_to_goal = math.sqrt(
+                (pos.x_val - goal_pose.x) ** 2 + (pos.y_val - goal_pose.y) ** 2
+            )
+
+        velocity = _vector_from_airsim(car_state.kinematics_estimated.linear_velocity)
+        speed = float(np.linalg.norm(velocity))
+        timestamp = getattr(car_state, "timestamp", None)
+        acceleration = 0.0
+        if (
+            self._previous_velocity is not None
+            and timestamp is not None
+            and self._previous_timestamp
+        ):
+            dt = max((timestamp - self._previous_timestamp) * 1e-9, 1e-3)
+            acceleration = float(np.linalg.norm((velocity - self._previous_velocity) / dt))
+            self._accumulator_time += dt
+        else:
+            self._accumulator_time = max(self._accumulator_time, self._step * self._control_dt)
+
+        self._previous_velocity = velocity
+        self._previous_timestamp = timestamp
+
+        heading = _compute_heading_deg(car_state.kinematics_estimated.orientation)
+        progress_possible = not has_collision and speed >= 0.2
 
         return {
             "telemetry": {
                 "distance_to_goal": distance_to_goal,
-                "speed_mps": car_state.speed,
+                "speed_mps": speed,
+                "acceleration_mps2": acceleration,
+                "heading_deg": heading,
                 "collision": has_collision,
                 "lane_mask_coverage_ratio": 1.0,  # Simplified
-                "progress_possible": True,
+                "progress_possible": progress_possible,
+                "sim_time_sec": self._accumulator_time,
             },
             "image": self._get_camera_image(),
         }
@@ -111,6 +167,19 @@ class AirSimSimulatorAdapter:
         except Exception:
             pass
         return None
+
+    def _advance_simulation(self) -> None:
+        try:
+            if hasattr(self._client, "simContinueForTime"):
+                self._client.simContinueForTime(self._control_dt)
+                return
+        except Exception:
+            pass
+        time.sleep(self._control_dt)
+
+    @property
+    def client(self) -> Any:
+        return self._client
 
 
 def _create_coordinator(
@@ -135,12 +204,10 @@ def _create_coordinator(
             print(f"Loaded DQN manager from {model_path}")
         else:
             print(f"No saved DQN manager found at {model_path}, creating new model")
-            dqn_model = DQN("MlpPolicy", "CartPole-v1", verbose=0)  # Placeholder
-            manager.attach_model(dqn_model)
+            manager.build_default_model()
     else:
         # Create new DQN model for training
-        dqn_model = DQN("MlpPolicy", "CartPole-v1", verbose=1)  # Placeholder
-        manager.attach_model(dqn_model)
+        manager.build_default_model()
 
     # Create workers
     workers = {}
@@ -154,12 +221,10 @@ def _create_coordinator(
                 print(f"Loaded SAC worker {command} from {worker_path}")
             else:
                 print(f"No saved worker found at {worker_path}, creating new model")
-                sac_model = SAC("MlpPolicy", "Pendulum-v1", verbose=0)  # Placeholder
-                worker.attach_model(sac_model)
+                worker.build_default_model()
         else:
             # Create new SAC model for training
-            sac_model = SAC("MlpPolicy", "Pendulum-v1", verbose=1)  # Placeholder
-            worker.attach_model(sac_model)
+            worker.build_default_model()
 
         workers[command] = worker
 
@@ -264,6 +329,9 @@ def inference_mode(args) -> int:
     print(f"Models: {args.models}")
 
     experiment = load_experiment(args.config)
+    artifact_manager = ArtifactManager(args.output)
+    run_paths = artifact_manager.start_run(f"eval_{experiment.id}")
+    completed_episodes = 0
 
     with airsim_session(mode=args.mode, settings_path=args.settings):
         client = airsim.CarClient()
@@ -283,8 +351,8 @@ def inference_mode(args) -> int:
         print("Watch AirSim window to see the car driving!")
         print("Press Ctrl+C to stop")
 
+        episode = 1
         try:
-            episode = 1
             while True:
                 print(f"\n--- Evaluation Run {episode} ---")
 
@@ -296,6 +364,14 @@ def inference_mode(args) -> int:
                 print(f"Reward: {result.cumulative_reward:.2f}")
                 print(f"Steps: {result.steps}")
 
+                _log_evaluation_episode(
+                    artifact_manager,
+                    run_paths.logs_dir,
+                    episode,
+                    result,
+                    env.last_observation,
+                )
+
                 if not args.continuous:
                     break
 
@@ -304,7 +380,17 @@ def inference_mode(args) -> int:
 
         except KeyboardInterrupt:
             print("\n🛑 Stopped by user")
+        finally:
+            completed_episodes = episode if args.continuous else min(episode, 1)
 
+    artifact_manager.write_json(
+        "evaluation_summary.json",
+        {
+            "episodes": completed_episodes,
+            "config_hash": experiment.config_hash,
+            "model_dir": args.models,
+        },
+    )
     print("✅ Inference completed!")
     return 0
 
@@ -321,8 +407,8 @@ def _build_perception(client, camera_name: str, detector_model: str) -> Percepti
             def run_detection(self, image):
                 return []
 
-        detector = DummyDetector()  # type: ignore[assignment]
-    return PerceptionPipeline(segmentation=segmentation, detector=detector)
+        detector = DummyDetector()
+    return PerceptionPipeline(segmentation=segmentation, detector=cast(YoloDetector, detector))
 
 
 def parse_args() -> argparse.Namespace:
@@ -356,8 +442,47 @@ def parse_args() -> argparse.Namespace:
     eval_parser.add_argument("--max-steps", type=int, default=1000)
     eval_parser.add_argument("--detector-model", default="yolov8n")
     eval_parser.add_argument("--camera-name", default="0")
+    eval_parser.add_argument("--output", default="artifacts", help="Artifact directory")
 
     return parser.parse_args()
+
+
+def _vector_from_airsim(vector) -> np.ndarray:
+    return np.array([vector.x_val, vector.y_val, vector.z_val], dtype=np.float32)
+
+
+def _compute_heading_deg(orientation) -> float:
+    try:
+        yaw = airsim.to_eularian_angles(orientation)[2]
+    except Exception:
+        yaw = 0.0
+    return math.degrees(yaw)
+
+
+def _log_evaluation_episode(
+    artifact_manager: ArtifactManager,
+    logs_dir: Path,
+    episode: int,
+    result,
+    observation,
+) -> None:
+    payload: dict[str, Any] = {
+        "episode": episode,
+        "reward": result.cumulative_reward,
+        "steps": result.steps,
+        "info": result.info,
+    }
+    if observation is not None:
+        payload["reward_components"] = dict(observation.reward_components)
+        payload["telemetry"] = dict(observation.telemetry)
+        payload["done_flags"] = dict(observation.done_flags)
+        payload["command"] = observation.command
+        payload["detections"] = observation.detections
+        if observation.segmentation_mask is not None:
+            mask_path = logs_dir / f"episode_{episode:03d}_segmentation.npy"
+            np.save(mask_path, observation.segmentation_mask)
+            payload["segmentation_mask_path"] = str(mask_path)
+    artifact_manager.append_jsonl("evaluation_log.jsonl", payload)
 
 
 def main() -> int:

@@ -87,7 +87,7 @@ def test_seeded_rollout_is_deterministic(experiment_definition):
     simulator = DummySimulator()
     perception = DummyPerception()
     reward = RewardCalculator(
-        RewardConfig(completion_bonus=2.0, idle_penalty_coef=0.5, idle_threshold=0.1)
+        RewardConfig(completion_bonus=2.0, idle_penalty_coef=0.5, idle_threshold_mps=0.1)
     )
 
     env = AirSimEnv(

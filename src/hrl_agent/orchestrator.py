@@ -28,14 +28,24 @@ class HRLOrchestrator:
         self, *, max_steps: int | None = None, deterministic: bool = True
     ) -> EpisodeResult:
         observation = self._env.reset()
+        self._coordinator.reset()
         cumulative_reward = 0.0
         steps = 0
         info: dict[str, Any] = {}
 
         while True:
+            completion_flag = self._coordinator.command_completed(observation)
             command, action = self._coordinator.act(observation, deterministic=deterministic)
-            self._env.set_command(command, completed=False)
-            observation, reward, terminated, truncated, info = self._env.step(action)
+            self._env.set_command(command, completed=completion_flag)
+            next_observation, reward, terminated, truncated, info = self._env.step(action)
+            if not deterministic:
+                self._coordinator.observe_transition(
+                    observation,
+                    reward,
+                    next_observation,
+                    done=terminated or truncated,
+                )
+            observation = next_observation
             cumulative_reward += reward
             steps += 1
 

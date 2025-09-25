@@ -111,11 +111,11 @@ run_task T035 & run_task T036 & run_task T037 & run_task T038
 
 ### Phase 4A — Solidify Training Framework
 
--   **T043 Stabilize AirSim adapter loop** — tighten reset/step contracts, move from fixed sleeps to simulator time checks, and expose low-level telemetry needed by rewards and workers.
--   **T044 Integrate SB3 training hooks** — replace placeholder Gym policies with AirSim-backed environments, wire replay buffers, and invoke `.learn()` inside the coordinator/orchestrator loop.
--   **T045 Expand evaluation artifacts** — capture episode summaries, config hashes, and perception snapshots during `eval` runs to track regressions.
--   **T046 Command completion feedback** — add heuristics or perception triggers that mark commands as complete so the reward bonus becomes meaningful.
--   **T047 Determinism audit** — rerun seeded tests and profiling to confirm the hardened loop preserves existing reproducibility guarantees.
+-   [x] T043 Stabilize AirSim adapter loop — tighten reset/step contracts, move from fixed sleeps to simulator time checks, and expose low-level telemetry needed by rewards and workers.
+-   [x] T044 Integrate SB3 training hooks — replace placeholder Gym policies with AirSim-backed environments, wire replay buffers, and invoke `.learn()` inside the coordinator/orchestrator loop.
+-   [x] T045 Expand evaluation artifacts — capture episode summaries, config hashes, and perception snapshots during `eval` runs to track regressions.
+-   [x] T046 Command completion feedback — add heuristics or perception triggers that mark commands as complete so the reward bonus becomes meaningful.
+-   [x] T047 Determinism audit — rerun seeded tests and profiling to confirm the hardened loop preserves existing reproducibility guarantees.
 
 ### Phase 4B — Parallelized Training Enablement (next phase)
 

@@ -7,9 +7,18 @@ from typing import Any
 import numpy as np
 
 try:  # pragma: no cover - optional dependency
+    import gymnasium as gym
+    from gymnasium import spaces
+except ImportError:  # pragma: no cover
+    gym = None  # type: ignore
+    spaces = None  # type: ignore
+
+try:  # pragma: no cover - optional dependency
     from stable_baselines3 import SAC
+    from stable_baselines3.common.logger import configure as configure_logger
 except ImportError:  # pragma: no cover
     SAC = None  # type: ignore
+    configure_logger = None  # type: ignore
 
 __all__ = ["SACWorker"]
 
@@ -17,11 +26,40 @@ __all__ = ["SACWorker"]
 class SACWorker:
     """Produces continuous control actions for throttle, brake, and steering."""
 
-    def __init__(self, *, model: Any | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        model: Any | None = None,
+        observation_space: Any | None = None,
+        action_space: Any | None = None,
+        learning_rate: float = 3e-4,
+        buffer_size: int = 100_000,
+        learning_starts: int = 256,
+    ) -> None:
         self._model = model
+        self._learning_rate = learning_rate
+        self._buffer_size = buffer_size
+        self._learning_starts = learning_starts
+        self._steps = 0
+        if spaces is not None:
+            self._observation_space = observation_space or spaces.Box(
+                low=-1.0,
+                high=1.0,
+                shape=(5,),
+                dtype=np.float32,
+            )
+            self._action_space = action_space or spaces.Box(
+                low=np.array([-1.0, 0.0, -1.0], dtype=np.float32),
+                high=np.array([1.0, 1.0, 1.0], dtype=np.float32),
+                dtype=np.float32,
+            )
+        else:  # pragma: no cover - gymnasium missing
+            self._observation_space = observation_space
+            self._action_space = action_space
 
     def attach_model(self, model: Any) -> None:
         self._model = model
+        self._steps = 0
 
     @property
     def model(self) -> Any | None:
@@ -36,6 +74,49 @@ class SACWorker:
         if self._model is None:
             raise RuntimeError("Cannot save before attaching a model")
         self._model.save(path)
+
+    def build_default_model(self) -> None:
+        if SAC is None:
+            raise RuntimeError("stable-baselines3 is required to initialize SAC models")
+        if gym is None or spaces is None:
+            raise RuntimeError("gymnasium is required to initialize SAC models")
+
+        class _StaticEnv(gym.Env):  # type: ignore[misc]
+            metadata = {"render_modes": []}
+
+            def __init__(self, observation_space: Any, action_space: Any) -> None:
+                super().__init__()
+                self.observation_space = observation_space
+                self.action_space = action_space
+
+            def reset(self, *, seed: int | None = None, options: dict | None = None):  # type: ignore[override]
+                super().reset(seed=seed)
+                shape = getattr(self.observation_space, "shape", (1,))
+                return np.zeros(shape, dtype=np.float32), {}
+
+            def step(self, action):  # type: ignore[override]
+                shape = getattr(self.observation_space, "shape", (1,))
+                obs = np.zeros(shape, dtype=np.float32)
+                reward = 0.0
+                terminated = True
+                truncated = False
+                info: dict[str, Any] = {}
+                return obs, reward, terminated, truncated, info
+
+        env = _StaticEnv(self._observation_space, self._action_space)
+        self._model = SAC(
+            "MlpPolicy",
+            env,
+            learning_rate=self._learning_rate,
+            buffer_size=self._buffer_size,
+            learning_starts=self._learning_starts,
+            train_freq=1,
+            gradient_steps=1,
+            verbose=0,
+        )
+        if configure_logger is not None:
+            self._model.set_logger(configure_logger())
+        self._steps = 0
 
     def act(self, observation: Any, *, deterministic: bool = False) -> dict[str, float]:
         if self._model is None:
@@ -57,3 +138,36 @@ class SACWorker:
             "brake": float(brake),
             "steering": float(steering),
         }
+
+    def process_experience(
+        self,
+        observation: np.ndarray,
+        action: np.ndarray,
+        reward: float,
+        next_observation: np.ndarray,
+        done: bool,
+    ) -> None:
+        if self._model is None or getattr(self._model, "replay_buffer", None) is None:
+            return
+
+        obs = np.asarray(observation, dtype=np.float32).reshape(1, -1)
+        next_obs = np.asarray(next_observation, dtype=np.float32).reshape(1, -1)
+        action_arr = np.asarray(action, dtype=np.float32).reshape(1, -1)
+        reward_arr = np.array([reward], dtype=np.float32)
+        done_arr = np.array([done], dtype=np.bool_)
+        infos: list[dict[str, Any]] = [{}]
+
+        replay_buffer = getattr(self._model, "replay_buffer", None)
+        if replay_buffer is None:
+            return
+
+        replay_buffer.add(obs, next_obs, action_arr, reward_arr, done_arr, infos)
+        self._steps += 1
+
+        if self._steps >= getattr(self._model, "learning_starts", self._learning_starts):
+            batch_size = getattr(self._model, "batch_size", 64)
+            self._model.train(batch_size=batch_size, gradient_steps=1)
+            if hasattr(self._model, "_total_timesteps"):
+                self._model._total_timesteps += 1  # type: ignore[attr-defined]
+            if hasattr(self._model, "_n_updates"):
+                self._model._n_updates += 1  # type: ignore[attr-defined]

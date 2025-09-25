@@ -26,24 +26,25 @@ def generate_reward_contract(
 ) -> Path:
     calculator = RewardCalculator(config)
     rows = [
-        _row("progress", "prev_distance - current_distance", "Positive when moving toward goal"),
         _row(
-            "lane_adherence", "lane_mask_coverage_ratio", "Normalized coverage within drivable area"
+            "command_shaping",
+            "progress_velocity + lane/heading shaping",
+            "Adaptive dense signal based on the active command",
         ),
         _row(
-            "collision",
+            "collision_penalty",
             f"-{calculator.config.collision_penalty}",
-            "Penalty applied when AirSim reports a collision",
+            "Applied immediately when a collision is reported",
         ),
         _row(
-            "command_completion",
+            "completion_bonus",
             f"+{calculator.config.completion_bonus}",
-            "Bonus when high-level command objective completes",
+            "Sparse bonus awarded once a command objective completes",
         ),
         _row(
             "idle_penalty",
-            f"-{calculator.config.idle_penalty_coef} (speed < {calculator.config.idle_threshold})",
-            "Discourages idling when progress possible",
+            f"-{calculator.config.idle_penalty_coef} (speed < {calculator.config.idle_threshold_mps})",
+            "Discourages idling when the agent could make progress",
         ),
     ]
 

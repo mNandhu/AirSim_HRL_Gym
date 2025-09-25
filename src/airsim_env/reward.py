@@ -114,7 +114,7 @@ class RewardCalculator:
         # Dot product of forward vector and goal vector gives cosine of the angle.
         # 1.0 = perfectly aligned, -1.0 = facing opposite direction.
         # We only want to reward forward progress, so clip at 0.
-        alignment = np.dot(state.forward_vector, state.vector_to_next_waypoint)
+        alignment = float(np.dot(state.forward_vector, state.vector_to_next_waypoint))
         forward_alignment = max(0.0, alignment)
 
         # Scale the alignment by the current speed.
@@ -130,7 +130,7 @@ class RewardCalculator:
     def _heading_alignment_reward(self, state: VehicleState) -> float:
         """Dense reward for aligning the vehicle's heading towards the next waypoint."""
         # This is crucial for guiding turns.
-        alignment = np.dot(state.forward_vector, state.vector_to_next_waypoint)
+        alignment = float(np.dot(state.forward_vector, state.vector_to_next_waypoint))
         reward = alignment * self._config.heading_alignment_coef
         return reward
 

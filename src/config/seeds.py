@@ -80,7 +80,9 @@ def _apply_airsim_seed(seed: int, *, airsim_client: Any | None, deterministic: b
                     f"Failed to apply AirSim seed via {candidate}: {exc}"
                 ) from exc
 
-    raise SeedApplicationError("Provided AirSim client does not support seeding APIs")
+    # Fallback: store intent in environment variables for launcher consumption.
+    os.environ["AIRSIM_RANDOM_SEED"] = str(seed)
+    os.environ["AIRSIM_DETERMINISTIC"] = "1" if deterministic else "0"
 
 
 __all__ = ["SeedApplicationError", "apply_seed_bundle"]
