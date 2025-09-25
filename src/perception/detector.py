@@ -54,7 +54,7 @@ class YoloDetector:
     def run_detection(self, image: Any) -> list[dict[str, Any]]:
         if image is None:
             return []
-        predictions = self._model(image)
+        predictions = self._model(image, verbose=False)
         if not predictions:
             return []
         first = predictions[0]

@@ -21,6 +21,7 @@ dependencies = [
     "backports-ssl-match-hostname>=3.7.0.1",
     "torch>=2.8.0",
     "ultralytics>=8.2.0",
+    "matplotlib>=3.10.6",
 ]
 
 [project.optional-dependencies]

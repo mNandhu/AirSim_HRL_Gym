@@ -21,6 +21,7 @@ from perception.pipeline import PerceptionPipeline
 from perception.segmentation import SegmentationAdapter
 from utils.airsim_runner import airsim_session
 from utils.artifacts import ArtifactManager
+from utils.metrics_tracker import MetricsTracker
 
 try:
     import airsim
@@ -280,17 +281,31 @@ def train_mode(args) -> int:
         )
         orchestrator = HRLOrchestrator(env, coordinator)
 
+        # Initialize metrics tracker
+        metrics_tracker = MetricsTracker(run_paths.run_dir, update_interval=5)
+        print("📊 Initialized metrics tracker - graphs will update every 5 steps")
+
         # Training loop
         training_stats = []
         for episode in range(args.episodes):
             print(f"\n=== Episode {episode + 1}/{args.episodes} ===")
 
+            # Start tracking this episode
+            metrics_tracker.start_episode(episode + 1)
+
             start_time = time.time()
             result = orchestrator.run_episode(
                 max_steps=args.max_steps,
                 deterministic=False,  # Use exploration during training
+                metrics_tracker=metrics_tracker,
             )
             episode_time = time.time() - start_time
+
+            # Finish tracking this episode
+            completed_successfully = not result.info.get("collision", False) and result.info.get(
+                "goal_reached", False
+            )
+            metrics_tracker.finish_episode(completed_successfully=completed_successfully)
 
             stats = {
                 "episode": episode + 1,
@@ -336,9 +351,27 @@ def train_mode(args) -> int:
         },
     )
 
+    # Print final metrics summary
+    summary_stats = metrics_tracker.get_summary_stats()
+    if summary_stats:
+        print("\n📊 Training Summary:")
+        print(f"   Total Episodes: {summary_stats.get('total_episodes', 0)}")
+        print(f"   Average Reward: {summary_stats.get('avg_reward', 0.0):.2f}")
+        print(f"   Best Reward: {summary_stats.get('best_reward', 0.0):.2f}")
+        print(
+            f"   Average Episode Length: {summary_stats.get('avg_episode_length', 0.0):.1f} steps"
+        )
+        print(f"   Success Rate: {summary_stats.get('success_rate', 0.0) * 100:.1f}%")
+        print(f"   Collision Rate: {summary_stats.get('collision_rate', 0.0) * 100:.1f}%")
+
     print("\n✅ Training completed!")
     print(f"Models saved to: {model_dir}")
     print(f"Logs saved to: {run_paths.run_dir}")
+    print(f"📊 Metrics and graphs saved to: {run_paths.run_dir}/metrics/")
+    print("   - reward.png: Real-time reward trends")
+    print("   - episode_summary.png: Episode-level performance")
+    print("   - action_analysis.png: Action patterns and distributions")
+    print("   - performance_metrics.png: Speed, distance, and reward breakdown")
 
     return 0
 

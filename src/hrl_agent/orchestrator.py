@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Optional
 
 from airsim_env.env import AirSimEnv
 
@@ -25,7 +25,11 @@ class HRLOrchestrator:
         self._coordinator = coordinator
 
     def run_episode(
-        self, *, max_steps: int | None = None, deterministic: bool = True
+        self,
+        *,
+        max_steps: int | None = None,
+        deterministic: bool = True,
+        metrics_tracker: Optional[Any] = None,
     ) -> EpisodeResult:
         observation = self._env.reset()
         self._coordinator.reset()
@@ -38,6 +42,32 @@ class HRLOrchestrator:
             command, action = self._coordinator.act(observation, deterministic=deterministic)
             self._env.set_command(command, completed=completion_flag)
             next_observation, reward, terminated, truncated, info = self._env.step(action)
+
+            # Log metrics if tracker is provided
+            if metrics_tracker is not None:
+                # Extract telemetry and reward components from observation
+                telemetry = {}
+                reward_components = {}
+
+                if hasattr(observation, "telemetry"):
+                    telemetry = observation.telemetry
+                elif isinstance(observation, dict) and "telemetry" in observation:
+                    telemetry = observation["telemetry"]
+
+                if hasattr(observation, "reward_components"):
+                    reward_components = observation.reward_components
+                elif isinstance(observation, dict) and "reward_components" in observation:
+                    reward_components = observation["reward_components"]
+
+                metrics_tracker.log_step(
+                    step=steps,
+                    reward=reward,
+                    action=action,
+                    telemetry=telemetry,
+                    reward_components=reward_components,
+                    command=command,
+                )
+
             if not deterministic:
                 self._coordinator.observe_transition(
                     observation,

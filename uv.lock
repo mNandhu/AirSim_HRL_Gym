@@ -403,6 +403,7 @@ source = { editable = "." }
 dependencies = [
     { name = "airsim" },
     { name = "backports-ssl-match-hostname" },
+    { name = "matplotlib" },
     { name = "msgpack-rpc-python" },
     { name = "numpy" },
     { name = "pydantic" },
@@ -425,6 +426,7 @@ dev = [
 requires-dist = [
     { name = "airsim", specifier = ">=1.8.1" },
     { name = "backports-ssl-match-hostname", specifier = ">=3.7.0.1" },
+    { name = "matplotlib", specifier = ">=3.10.6" },
     { name = "msgpack-rpc-python", specifier = ">=0.4.1" },
     { name = "numpy", specifier = ">=2.3.3" },
     { name = "pydantic", specifier = "==2.7.1" },
