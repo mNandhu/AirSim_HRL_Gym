@@ -1,0 +1,79 @@
+"""Pydantic models describing experiment configuration for reproducible rollouts."""
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Optional
+from uuid import UUID, uuid4
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+
+
+class Pose(BaseModel):
+    """Simple pose representation for AirSim coordinates."""
+
+    model_config = ConfigDict(frozen=True)
+
+    x: float
+    y: float
+    z: float
+    yaw: float = Field(..., ge=-360.0, le=360.0)
+
+
+class SeedBundle(BaseModel):
+    """Collection of RNG seeds applied before environment resets."""
+
+    model_config = ConfigDict(frozen=True)
+
+    python: int
+    numpy: int
+    torch: int
+    airsim: int
+    deterministic: bool = True
+
+    @field_validator("python", "numpy", "torch", "airsim")
+    @classmethod
+    def _check_seed(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("Seeds must be non-negative integers")
+        return value
+
+
+class ExperimentDefinition(BaseModel):
+    """Immutable experiment configuration describing a deterministic rollout."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: UUID = Field(default_factory=uuid4)
+    scene: str
+    vehicle: str
+    start_pose: Pose
+    goal_pose: Pose
+    horizon: int = Field(..., gt=0)
+    seeds: SeedBundle
+    weather_profile: Optional[str] = None
+    generated_at: datetime = Field(
+        default_factory=lambda: datetime.now(tz=datetime.utcnow().astimezone().tzinfo)
+    )
+    config_hash: Optional[str] = None
+
+    @field_validator("scene", "vehicle")
+    @classmethod
+    def _strip_strings(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Field cannot be empty")
+        return value
+
+    @field_validator("config_hash")
+    @classmethod
+    def _validate_hash(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        if len(value) != 64:
+            raise ValueError("config_hash must be a 64-character SHA256 hex digest")
+        int(value, 16)
+        return value
+
+
+__all__ = ["Pose", "SeedBundle", "ExperimentDefinition", "ValidationError"]

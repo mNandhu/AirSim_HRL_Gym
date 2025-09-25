@@ -1,0 +1,28 @@
+{
+  "SimMode": "Car",
+  "ClockSpeed": 1,
+  "Vehicles": {
+    "DefaultSedan": {
+      "VehicleType": "PhysXCar",
+      "AutoCreate": true
+    }
+  },
+  "SubWindows": [],
+  "CameraDefaults": {
+    "CaptureSettings": [
+      {
+        "ImageType": 0,
+        "Width": 640,
+        "Height": 480,
+        "FOV_Degrees": 90,
+        "MotionBlurAmount": 0
+      },
+      {
+        "ImageType": 5,
+        "Width": 640,
+        "Height": 480,
+        "FOV_Degrees": 90
+      }
+    ]
+  }
+}
