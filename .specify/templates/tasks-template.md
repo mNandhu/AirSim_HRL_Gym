@@ -4,6 +4,7 @@
 **Prerequisites**: plan.md (required), research.md, data-model.md, contracts/
 
 ## Execution Flow (main)
+
 ```
 1. Load plan.md from feature directory
    → If not found: ERROR "No implementation plan found"
@@ -13,11 +14,11 @@
    → contracts/: Each file → contract test task
    → research.md: Extract decisions → setup tasks
 3. Generate tasks by category:
-   → Setup: project init, dependencies, linting
-   → Tests: contract tests, integration tests
-   → Core: models, services, CLI commands
-   → Integration: DB, middleware, logging
-   → Polish: unit tests, performance, docs
+   → Setup: environment module scaffolding, dependency injection, config schema
+   → Tests: pytest unit coverage for utilities + reward logic, integration harness for AirSim
+   → Environment: `AirSimEnv` implementation, telemetry adapters, reward encapsulation
+   → Agent: manager/worker hooks that consume environment interfaces only
+   → Reproducibility & Docs: experiment configs, seed pipelines, reward documentation
 4. Apply task rules:
    → Different files = mark [P] for parallel
    → Same file = sequential (no [P])
@@ -26,102 +27,120 @@
 6. Generate dependency graph
 7. Create parallel execution examples
 8. Validate task completeness:
-   → All contracts have tests?
-   → All entities have models?
-   → All endpoints implemented?
+   → Environment/agent boundary maintained?
+   → Reproducible experiment artifacts defined (start/end pose, seeds)?
+   → Mandatory pytest suites (unit + integration) authored before implementation?
+   → Reward/observation documentation tasks included?
 9. Return: SUCCESS (tasks ready for execution)
 ```
 
 ## Format: `[ID] [P?] Description`
+
 - **[P]**: Can run in parallel (different files, no dependencies)
 - Include exact file paths in descriptions
 
 ## Path Conventions
-- **Single project**: `src/`, `tests/` at repository root
-- **Web app**: `backend/src/`, `frontend/src/`
-- **Mobile**: `api/src/`, `ios/src/` or `android/src/`
-- Paths shown below assume single project - adjust based on plan.md structure
+
+- Environment module lives under `src/airsim_env/` (or repo-specific equivalent) with pytest suites under `tests/airsim_env/`.
+- HRL agent logic resides under `src/hrl_agent/` and MUST consume environment interfaces only.
+- Experiment configurations stored in `configs/experiments/` with seeds persisted alongside outputs.
+- Adjust paths based on plan.md structure while preserving environment/agent separation.
 
 ## Phase 3.1: Setup
-- [ ] T001 Create project structure per implementation plan
-- [ ] T002 Initialize [language] project with [framework] dependencies
-- [ ] T003 [P] Configure linting and formatting tools
+
+- [ ] T001 Create `src/airsim_env/` module and register it as standalone package
+- [ ] T002 Establish dependency injection container for AirSim client (`src/infra/clients.py`)
+- [ ] T003 [P] Define reproducible experiment schema in `configs/experiments/base.yaml`
+- [ ] T004 [P] Configure linting, formatting, and pytest coverage thresholds (>=90% for non-learning code)
 
 ## Phase 3.2: Tests First (TDD) ⚠️ MUST COMPLETE BEFORE 3.3
+
 **CRITICAL: These tests MUST be written and MUST FAIL before ANY implementation**
-- [ ] T004 [P] Contract test POST /api/users in tests/contract/test_users_post.py
-- [ ] T005 [P] Contract test GET /api/users/{id} in tests/contract/test_users_get.py
-- [ ] T006 [P] Integration test user registration in tests/integration/test_registration.py
-- [ ] T007 [P] Integration test auth flow in tests/integration/test_auth.py
+
+- [ ] T005 [P] Unit test `AirSimEnv.reset`/`step` lifecycle in `tests/airsim_env/test_env_loop.py`
+- [ ] T006 [P] Unit test reward calculus module in `tests/airsim_env/test_reward.py`
+- [ ] T007 [P] Integration test seeded rollout using simulator stub in `tests/integration/test_seeded_rollout.py`
+- [ ] T008 [P] Configuration validator test for experiment schema in `tests/integration/test_config_validation.py`
 
 ## Phase 3.3: Core Implementation (ONLY after tests are failing)
-- [ ] T008 [P] User model in src/models/user.py
-- [ ] T009 [P] UserService CRUD in src/services/user_service.py
-- [ ] T010 [P] CLI --create-user in src/cli/user_commands.py
-- [ ] T011 POST /api/users endpoint
-- [ ] T012 GET /api/users/{id} endpoint
-- [ ] T013 Input validation
-- [ ] T014 Error handling and logging
+
+- [ ] T009 [P] Implement `AirSimEnv` interface in `src/airsim_env/env.py`
+- [ ] T010 [P] Implement reward module encapsulation `src/airsim_env/reward.py`
+- [ ] T011 [P] Add observation builder with normalization in `src/airsim_env/observation.py`
+- [ ] T012 Create agent-facing command bus consuming environment interface in `src/hrl_agent/manager.py`
+- [ ] T013 Implement experiment config loader applying seeds in `src/infra/config_loader.py`
+- [ ] T014 Persist rollout metadata and telemetry to `artifacts/` bundle
 
 ## Phase 3.4: Integration
-- [ ] T015 Connect UserService to DB
-- [ ] T016 Auth middleware
-- [ ] T017 Request/response logging
-- [ ] T018 CORS and security headers
+
+- [ ] T015 Connect AirSim client adapter with retry/backoff logic
+- [ ] T016 Wire telemetry streaming to logging + metrics sink
+- [ ] T017 Expose CLI/CLI command `scripts/run_experiment.py` with deterministic seed inputs
+- [ ] T018 Verify environment compatibility against latest agent branch (no reverse dependencies)
 
 ## Phase 3.5: Polish
-- [ ] T019 [P] Unit tests for validation in tests/unit/test_validation.py
-- [ ] T020 Performance tests (<200ms)
-- [ ] T021 [P] Update docs/api.md
-- [ ] T022 Remove duplication
-- [ ] T023 Run manual-testing.md
+
+- [ ] T019 [P] Extend pytest suite for edge-case telemetry failures
+- [ ] T020 Generate/refresh `docs/reward-contract.md`
+- [ ] T021 [P] Publish reproducibility checklist (config hash + seeds) in release notes
+- [ ] T022 Enforce coverage gate and archive pytest HTML report
+- [ ] T023 Conduct manual smoke with seeded AirSim session and record findings
 
 ## Dependencies
-- Tests (T004-T007) before implementation (T008-T014)
-- T008 blocks T009, T015
-- T016 blocks T018
-- Implementation before polish (T019-T023)
+
+- Tests (T005-T008) before implementation (T009-T014)
+- T009 blocks T015 (AirSim client integration)
+- T010/T011 block agent consumption (T012)
+- T013 blocks reproducibility documentation (T021)
+- Implementation complete before polish (T019-T023)
 
 ## Parallel Example
+
 ```
-# Launch T004-T007 together:
-Task: "Contract test POST /api/users in tests/contract/test_users_post.py"
-Task: "Contract test GET /api/users/{id} in tests/contract/test_users_get.py"
-Task: "Integration test registration in tests/integration/test_registration.py"
-Task: "Integration test auth in tests/integration/test_auth.py"
+# Launch T005-T008 together:
+Task: "Unit test AirSimEnv.reset/step lifecycle in tests/airsim_env/test_env_loop.py"
+Task: "Unit test reward calculus module in tests/airsim_env/test_reward.py"
+Task: "Integration test seeded rollout in tests/integration/test_seeded_rollout.py"
+Task: "Configuration validator test for experiment schema in tests/integration/test_config_validation.py"
 ```
 
 ## Notes
+
 - [P] tasks = different files, no dependencies
 - Verify tests fail before implementing
 - Commit after each task
 - Avoid: vague tasks, same file conflicts
 
 ## Task Generation Rules
-*Applied during main() execution*
 
-1. **From Contracts**:
-   - Each contract file → contract test task [P]
-   - Each endpoint → implementation task
-   
-2. **From Data Model**:
-   - Each entity → model creation task [P]
-   - Relationships → service layer tasks
-   
-3. **From User Stories**:
-   - Each story → integration test [P]
-   - Quickstart scenarios → validation tasks
+_Applied during main() execution_
+
+1. **From Environment Interfaces**:
+
+   - Each interface change → corresponding pytest unit task [P]
+   - Reward/observation updates → documentation + test tasks
+
+2. **From Experiment Configurations**:
+
+   - Each scenario → config file task + seeded smoke test
+   - Seeds/poses → artifact persistence task
+
+3. **From Agent Requirements**:
+
+   - Each agent-worker interaction → adapter task consuming environment API only
+   - Concurrent workers → telemetry coordination tasks
 
 4. **Ordering**:
    - Setup → Tests → Models → Services → Endpoints → Polish
    - Dependencies block parallel execution
 
 ## Validation Checklist
-*GATE: Checked by main() before returning*
 
-- [ ] All contracts have corresponding tests
-- [ ] All entities have model tasks
-- [ ] All tests come before implementation
-- [ ] Parallel tasks truly independent
-- [ ] Each task specifies exact file path
-- [ ] No task modifies same file as another [P] task
+_GATE: Checked by main() before returning_
+
+- [ ] Environment boundary tasks exist (no agent imports in environment tasks)
+- [ ] Reproducibility tasks cover scene, poses, seeds, and artifact logging
+- [ ] Pytest tasks precede implementation tasks and enforce coverage thresholds
+- [ ] Reward/observation documentation tasks included
+- [ ] Parallel tasks operate on disjoint files
+- [ ] Each task specifies exact file path or configuration artifact
