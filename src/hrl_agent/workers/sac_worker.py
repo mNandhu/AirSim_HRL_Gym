@@ -57,8 +57,12 @@ class SACWorker:
                 shape=(5,),
                 dtype=np.float32,
             )
+            # Fixed action space to match simulator expectations:
+            # throttle: [0, 1] (not [-1, 1] since negative throttle gets clipped to 0)
+            # brake: [0, 1] (unchanged)
+            # steering: [-1, 1] (unchanged)
             self._action_space = action_space or spaces.Box(
-                low=np.array([-1.0, 0.0, -1.0], dtype=np.float32),
+                low=np.array([0.0, 0.0, -1.0], dtype=np.float32),
                 high=np.array([1.0, 1.0, 1.0], dtype=np.float32),
                 dtype=np.float32,
             )
@@ -122,6 +126,11 @@ class SACWorker:
             learning_starts=self._learning_starts,
             train_freq=1,
             gradient_steps=1,
+            # Added better hyperparameters for more stable training
+            batch_size=64,
+            tau=0.02,  # Smaller tau for more stable target network updates
+            gamma=0.99,  # Standard discount factor
+            use_sde=False,  # Disable state-dependent exploration for more predictable actions initially
             verbose=0,
         )
         self._configure_logger(log_dir)
@@ -139,10 +148,15 @@ class SACWorker:
 
     def act(self, observation: Any, *, deterministic: bool = False) -> dict[str, float]:
         if self._model is None:
-            # Return neutral control until a model is attached.
-            return {"throttle": 0.0, "brake": 0.0, "steering": 0.0}
+            # Return small forward throttle to encourage initial movement during untrained phase
+            # This helps the agent start exploring instead of staying completely stationary
+            action_dict = {"throttle": 0.2, "brake": 0.0, "steering": 0.0}
+            return action_dict
+
         action, _ = self._model.predict(observation, deterministic=deterministic)
+
         values = np.asarray(action, dtype=np.float32).reshape(-1)
+
         if values.size == 0:
             values = np.zeros(3, dtype=np.float32)
         elif values.size < 3:
@@ -151,12 +165,29 @@ class SACWorker:
             values = padded
         elif values.size > 3:
             values = values[:3]
+
         throttle, brake, steering = values
-        return {
-            "throttle": float(throttle),
-            "brake": float(brake),
-            "steering": float(steering),
+
+        # Ensure actions are within expected bounds (match simulator expectations)
+        throttle = float(np.clip(throttle, 0.0, 1.0))  # [0, 1] for throttle
+        brake = float(np.clip(brake, 0.0, 1.0))  # [0, 1] for brake
+        steering = float(np.clip(steering, -1.0, 1.0))  # [-1, 1] for steering
+
+        # CRITICAL FIX: Ensure throttle and brake are mutually exclusive
+        # In real driving, you don't press gas and brake simultaneously
+        if throttle > 0.1 and brake > 0.1:  # If both are significant
+            # Choose the dominant action
+            if throttle > brake:
+                brake = 0.0  # Prioritize throttle
+            else:
+                throttle = 0.0  # Prioritize brake
+
+        action_dict = {
+            "throttle": throttle,
+            "brake": brake,
+            "steering": steering,
         }
+        return action_dict
 
     def process_experience(
         self,
