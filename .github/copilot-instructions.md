@@ -1,112 +1,42 @@
 # GitHub Copilot Project Instructions
 
-Purpose: Enable AI agents to contribute safely and productively to the AirSim HRL Training Framework.
+Purpose: help AI contributors extend the AirSim hierarchical RL stack safely and productively.
 
-## 1. Architectural Overview
+## 1. Big-picture architecture
 
-- This repo (branch example: `002-feature-title-airsim`) documents a Hierarchical RL framework (no runtime code yet) targeting AirSim.
-- Hierarchy: DQN Manager (discrete commands) → SAC Workers (continuous control) → `AirSimEnv` (Gym-like wrapper) → AirSim simulator.
-- Perception stack: AirSim segmentation (ground-truth) + YOLOv12 detection (torch.hub) -> fused into ObservationPacket.
-- Reproducibility core: ExperimentDefinition (scene, vehicle, start/goal pose, seeds, horizon) + SeedBundle ensures deterministic runs.
-- Reward shaping isolated in `src/airsim_env/reward.py`; documentation generated to `docs/reward-contract.md`.
+-   **Hierarchy:** `hrl_agent.manager.DQNManager` selects discrete commands → `hrl_agent.workers.SACWorker` outputs throttle/brake/steering → `AirSimEnv` (`src/airsim_env/env.py`) applies them through an AirSim client adapter.
+-   **Perception pipeline:** `perception.segmentation.SegmentationAdapter` captures masks, `perception.detector.YoloDetector` loads Ultralytics models, and `perception.pipeline.PerceptionPipeline` converts AirSim frames to `(H,W,3)` NumPy arrays before fusing results into an `ObservationPacket`.
+-   **Reproducibility:** Experiment YAMLs flow through `config.loader.load_experiment` into immutable `ExperimentDefinition`s that embed a `SeedBundle`; `config.seeds.apply_seed_bundle` seeds Python/NumPy/Torch/AirSim on every reset.
+-   **Artifacts:** `utils.artifacts.ArtifactManager` writes JSONL logs & summaries under `artifacts/<timestamp>_<id>/`; reward behavior is documented in `docs/reward-contract.md` and must stay in sync with code.
 
-## 2. Constitution Enforcement (DO NOT VIOLATE)
+## 2. Source layout highlights
 
-1. Environment must not import agent code (one‑way dependency only).
-2. All reproducibility inputs (scene, vehicle, poses, seeds) must appear in experiment config YAML before execution.
-3. Non-learning infrastructure (env, perception adapters, sim runner, config loader) requires ≥90% pytest coverage.
-4. State / action / reward contract changes require simultaneous doc + test updates.
+-   `src/airsim_env/`: environment façade, reward calculator, observation helpers. Keep this layer free of agent imports.
+-   `src/hrl_agent/`: command coordination (`coordination.py`), manager/workers, `HRLOrchestrator` for episode rollouts.
+-   `src/perception/`: segmentation and YOLO adapters (loading now uses `from ultralytics import YOLO` with a dummy fallback when downloads fail).
+-   `src/utils/airsim_runner.py`: launch AirSim via `airsim_session`, retries with structured logs in `simulator_failures.log`.
+-   `src/scripts/train_and_eval.py`: primary CLI (`train` / `eval`) that wires simulator adapter, perception pipeline, artifacts, and coordination.
+-   Specs & contracts live under `specs/002-feature-title-airsim/`; consult `plan.md`, `data-model.md`, `contracts/*`, and `tasks.md` for intent before modifying interfaces.
 
-## 3. Planned Source Layout (when implemented)
+## 3. Working locally
 
-```
-src/
-  airsim_env/        # env.py, reward.py, observation.py
-  hrl_agent/
-    manager/         # dqn_manager.py
-    workers/         # sac_worker.py
-  perception/        # segmentation.py, detector.py
-  utils/             # airsim_runner.py, artifacts.py, reward_doc.py, perf_metrics.py
-  config/            # experiment.py, loader.py, seeds.py, settings_hash.py
-  scripts/           # run_experiment.py, profile_step.py
-tests/
-  unit/              # Fine-grained tests
-  integration/       # Seeded rollout, restart, determinism
-  performance/       # Optional latency sampling
-configs/experiments/  # YAML experiment definitions
-```
+-   Install deps with `uv sync` (Python ≥3.12). Ensure AirSim is installed and `settings.json` plus `AIRSIM_EXECUTABLE` are configured.
+-   Run the quality gate with `uv run pytest` (pyproject enforces `--cov=src --cov-report=term-missing --cov-fail-under=85`). Integration tests mock AirSim but still expect deterministic seeds.
+-   Smoke training by launching AirSim, then `uv run python src/scripts/train_and_eval.py train --config configs/experiments/training.yaml --episodes 1 --max-steps 200`. Use `--detector-model <weights>` to pick YOLO checkpoints; on load failure the dummy detector returns no boxes so training proceeds.
+-   Evaluate saved models with `uv run python src/scripts/train_and_eval.py eval --config configs/experiments/baseline.yaml --models models --continuous`.
 
-## 4. Key Documents (Spec Phase)
+## 4. Coding conventions & guardrails
 
-- `specs/.../spec.md`: Feature requirements & clarifications.
-- `plan.md`: Technical context + constitution checks (already PASS).
-- `data-model.md`: Entities and relationships (ExperimentDefinition, ObservationPacket, etc.).
-- `contracts/`: API contracts for environment, perception, simulator runner.
-- `tasks.md`: Ordered TDD-first implementation plan (42 tasks).
+-   Preserve one-way dependencies: env/perception/utils must not import `hrl_agent`. Keep reward math inside `src/airsim_env/reward.py`; update `docs/reward-contract.md` and related tests upon changes.
+-   Always convert AirSim image responses to NumPy arrays before calling Ultralytics to avoid “Unsupported image type” errors (`PerceptionPipeline._to_numpy_image`).
+-   Logging and artifacts should remain structured JSON and include config hashes from `config.loader.compute_config_hash`.
+-   When adding experiment fields or seeds, extend `ExperimentDefinition`, update YAML fixtures, and ensure determinism tests stay green.
+-   Expand existing pytest suites (`tests/unit`, `tests/integration`) instead of ad-hoc scripts; perception/runner additions generally need both unit coverage and targeted integration tests.
 
-## 5. Implementation Priorities
+## 5. When unsure
 
-Follow `tasks.md` strictly in order groups:
+-   Trace API contracts in `specs/002-feature-title-airsim/contracts/` before altering data flows, then cross-check `tasks.md` for sequencing.
+-   Run `python run.py` for an interactive checklist the repo presents to contributors.
+-   Leave notes here if new non-obvious workflows emerge (extra scripts, simulator setup quirks, YOLO weight management).
 
-1. Scaffold + config (T001–T006)
-2. Failing tests first (T007–T014) – ensure they FAIL before implementing.
-3. Core modules (T015–T026) – keep reward logic ONLY in reward module.
-4. Integration wiring (T027–T034) – add seeded rollout + determinism check.
-5. Polish & docs (T035–T042) – generate reward-contract doc last after reward module stable.
-
-## 6. Testing & Quality
-
-- Use pytest + pytest-cov; enforce `--cov=src --cov-report=term-missing`.
-- Add unit tests per entity or module boundary; integration tests must set explicit seeds before env reset.
-- Determinism test: Run same config twice → identical cumulative reward & config hash.
-- Add latency measurement helpers for perception and step loop (<50ms p50 target for perception path).
-
-## 7. Perception Guidelines
-
-- Segmentation: call AirSim `ImageType.Segmentation` → integer mask (no training step).
-- Detection: torch.hub load YOLO; lazy load inside first call to reduce startup time.
-- Observation builder merges: RGB → normalization; produce segmentation mask & detection list; embed command & telemetry.
-
-## 8. Simulator Management
-
-- `airsim_runner.py` launches `AirSimNH.exe` with `-settings` and optionally `-RenderOffScreen`.
-- Retry policy: up to 3 attempts; log structured JSON + append to `simulator_failures.log`.
-- Provide pytest fixture `airsim_session` (session scope) for headless use.
-
-## 9. Reproducibility & Seeds
-
-- Apply seeds (python, numpy, torch, airsim) BEFORE first `reset()`.
-- Store seeds + config hash in artifacts; do not rely on implicit defaults.
-
-## 10. Reward Components (Initial Formulas)
-
-Reference (keep configurable constants centralized):
-
-- progress = prev_distance_to_goal - curr_distance_to_goal
-- lane_adherence = lane_mask_coverage_ratio
-- collision = -1 \* int(collision_occurred)
-- command_completion = completion_bonus \* int(command_objective_met)
-- idle_penalty = -idle_penalty_coef \* int(speed_mps < idle_threshold & progress_possible)
-
-## 11. Contribution Conventions
-
-- One task per commit where practical; include task ID (e.g., "T015: implement reward module scaffold").
-- Never move reward logic into env.step body; call reward.compute.\* functions instead.
-- Keep environment free of any stable-baselines3 imports.
-- Update `docs/reward-contract.md` and add/adjust tests whenever observation or reward semantics change.
-
-## 12. Common Pitfalls to Avoid
-
-- Forgetting to seed AirSim before reset (breaks determinism test).
-- Hardcoding detection class IDs without documenting mapping.
-- Logging only human-readable text (always include structured JSON fields for artifacts).
-- Allowing perception code to silently swallow model load failures (raise explicit error).
-
-## 13. When Unsure
-
-- Check contracts first → data-model → tasks ordering.
-- If new reward component introduced: add test, update contract table + doc, increment doc version.
-
----
-
-Feedback welcome: Identify unclear areas (e.g., artifact directory naming, performance thresholds) for iterative refinement.
+Feedback welcome—flag unclear areas (artifact naming, AirSim launch expectations, YOLO usage) so we can refine these instructions.
