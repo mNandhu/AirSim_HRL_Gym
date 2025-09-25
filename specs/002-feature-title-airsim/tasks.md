@@ -104,3 +104,23 @@ run_task T035 & run_task T036 & run_task T037 & run_task T038
 
 -   YOLO model name kept generic (`yolov12n` placeholder) — pin exact variant when weights confirmed.
 -   Scheduling policy upgrade (priority queue) deferred; placeholder ensures deterministic sequential order.
+
+## Phase 4: Pending Implementations
+
+> Goal: finish hardening the single-agent training workflow before layering in parallelized rollout support.
+
+### Phase 4A — Solidify Training Framework
+
+-   **T043 Stabilize AirSim adapter loop** — tighten reset/step contracts, move from fixed sleeps to simulator time checks, and expose low-level telemetry needed by rewards and workers.
+-   **T044 Integrate SB3 training hooks** — replace placeholder Gym policies with AirSim-backed environments, wire replay buffers, and invoke `.learn()` inside the coordinator/orchestrator loop.
+-   **T045 Expand evaluation artifacts** — capture episode summaries, config hashes, and perception snapshots during `eval` runs to track regressions.
+-   **T046 Command completion feedback** — add heuristics or perception triggers that mark commands as complete so the reward bonus becomes meaningful.
+-   **T047 Determinism audit** — rerun seeded tests and profiling to confirm the hardened loop preserves existing reproducibility guarantees.
+
+### Phase 4B — Parallelized Training Enablement (next phase)
+
+-   **T048 Environment pooling design** — outline how multiple AirSim instances or replay buffers can be multiplexed without violating seed isolation.
+-   **T049 Parallel coordinator interface** — extend `CommandCoordinator`/`HRLOrchestrator` to accept batched observations and distribute actions across workers.
+-   **T050 Async perception pipeline** — introduce frame skipping or worker threads so perception keeps up with multiple concurrent simulators.
+-   **T051 Resource orchestration tooling** — add scripts/configs for launching and monitoring parallel jobs (Multi-GPU SB3, multiple AirSim heads) with telemetry on utilization.
+-   **T052 Regression & scaling tests** — craft pytest/integration scenarios that exercise the parallel path and compare throughput against the single-run baseline.
