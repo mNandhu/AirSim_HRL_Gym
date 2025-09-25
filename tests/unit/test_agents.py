@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from hrl_agent.manager.dqn_manager import CommandPolicy, DQNManager
@@ -31,6 +32,19 @@ def test_sac_worker_returns_default_action():
     worker = SACWorker()
     action = worker.act({}, deterministic=True)
     assert set(action.keys()) == {"throttle", "brake", "steering"}
+
+
+def test_sac_worker_handles_scalar_action():
+    class ScalarModel:
+        def predict(self, observation, deterministic=True):
+            return 0.75, None
+
+    worker = SACWorker()
+    worker.attach_model(ScalarModel())
+    action = worker.act(np.zeros(5, dtype=np.float32), deterministic=True)
+    assert action["throttle"] == pytest.approx(0.75)
+    assert action["brake"] == 0.0
+    assert action["steering"] == 0.0
 
 
 def test_sac_worker_attach_and_save(tmp_path):

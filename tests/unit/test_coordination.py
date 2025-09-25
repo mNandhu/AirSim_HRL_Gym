@@ -1,3 +1,5 @@
+import numpy as np
+
 from hrl_agent.coordination import CommandCoordinator
 from hrl_agent.manager.dqn_manager import CommandPolicy, DQNManager
 from hrl_agent.workers.sac_worker import SACWorker
@@ -9,6 +11,7 @@ class DeterministicWorker(SACWorker):
         self._action = action
 
     def act(self, observation, *, deterministic=True):
+        assert isinstance(observation, np.ndarray)
         return self._action
 
 
@@ -18,6 +21,8 @@ class DummyManager(DQNManager):
         self.attach_model(object())
 
     def select_command(self, observation, *, deterministic=True):
+        assert isinstance(observation, np.ndarray)
+        assert observation.shape == (5,)
         return "A"
 
 
@@ -29,7 +34,8 @@ def test_coordinator_act_returns_command_and_action():
     }
     coordinator = CommandCoordinator(manager, workers)
 
-    command, action = coordinator.act({})
+    observation = {"telemetry": {"distance_to_goal": 10.0, "speed_mps": 5.0}}
+    command, action = coordinator.act(observation)
 
     assert command == "A"
     assert action["throttle"] == 1.0
@@ -43,8 +49,9 @@ def test_act_sequential_cycles_workers():
     }
     coordinator = CommandCoordinator(manager, workers)
 
-    cmd1, action1 = coordinator.act_sequential({})
-    cmd2, action2 = coordinator.act_sequential({})
+    observation = {"telemetry": {"distance_to_goal": 20.0, "speed_mps": 3.0}}
+    cmd1, action1 = coordinator.act_sequential(observation)
+    cmd2, action2 = coordinator.act_sequential(observation)
 
     assert (cmd1, action1["throttle"]) == ("A", 1.0)
     assert (cmd2, action2["throttle"]) == ("B", 2.0)

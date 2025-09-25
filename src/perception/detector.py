@@ -1,4 +1,4 @@
-"""YOLOv12 detection wrapper using ``torch.hub`` for lazy model loading."""
+"""YOLO detection wrapper using the ``ultralytics`` package."""
 
 from __future__ import annotations
 
@@ -11,6 +11,11 @@ try:  # pragma: no cover - optional dependency when torch unavailable
     import torch  # type: ignore[attr-defined]
 except ImportError:  # pragma: no cover
     torch = None  # type: ignore
+
+try:  # pragma: no cover - optional dependency when ultralytics unavailable
+    from ultralytics import YOLO  # type: ignore[attr-defined]
+except ImportError:  # pragma: no cover
+    YOLO = None  # type: ignore
 
 __all__ = ["ModelLoadError", "YoloDetector"]
 
@@ -27,28 +32,28 @@ class Detection:
 
 
 class YoloDetector:
-    """Wrapper around a YOLOv12 model loaded via ``torch.hub``."""
+    """Wrapper around a YOLO model loaded via ``ultralytics``."""
 
     def __init__(
         self,
         model_name: str = "yolov12n",
         *,
-        repo: str = "ultralytics/yolov12",
         model: Any | None = None,
     ) -> None:
         if model is not None:
             self._model = model
         else:
-            if torch is None:
-                raise ModelLoadError("torch is required to load YOLO models")
+            if YOLO is None:
+                raise ModelLoadError("ultralytics is required to load YOLO models")
             try:
-                self._model = torch.hub.load(repo, model_name)
+                self._model = YOLO(model_name)
             except Exception as exc:  # pragma: no cover - network errors
                 raise ModelLoadError(f"Failed to load YOLO model {model_name!r}: {exc}") from exc
         self._model_name = model_name
-        self._repo = repo
 
     def run_detection(self, image: Any) -> list[dict[str, Any]]:
+        if image is None:
+            return []
         predictions = self._model(image)
         if not predictions:
             return []

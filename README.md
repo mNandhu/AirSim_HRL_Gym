@@ -21,17 +21,94 @@ configs/
 
 ## Getting Started
 
-1. Install Python with [uv](https://github.com/astral-sh/uv) (Python 3.12).
-2. Install dependencies:
+### Quick Start (Training & Evaluation)
+
+1. **Install dependencies:**
+
     ```pwsh
     uv sync
     ```
-3. Run the seeded experiment script (requires AirSim simulator and Python API):
+
+2. **Check setup and get instructions:**
+
     ```pwsh
-    uv run python src/scripts/run_experiment.py --config configs/experiments/baseline.yaml
+    python run.py
     ```
 
+3. **Launch AirSim**: Start the AirSim simulator with Neighbourhood environment
+
+4. **Train the HRL agent** (watch the car learn to drive):
+
+    ```pwsh
+    uv run python src/scripts/train_and_eval.py train --config configs/experiments/training.yaml
+    ```
+
+5. **Evaluate trained model** (watch the trained car drive):
+    ```pwsh
+    uv run python src/scripts/train_and_eval.py eval --config configs/experiments/baseline.yaml --models models
+    ```
+
+### Training Mode Options
+
+```pwsh
+# Basic training with GUI (recommended for first runs)
+uv run python src/scripts/train_and_eval.py train --config configs/experiments/training.yaml
+
+# Training options
+--episodes 100           # Number of training episodes
+--save-interval 10       # Save models every N episodes
+--mode gui              # Show AirSim window (use 'headless' to hide)
+--resume                # Resume from previously saved models
+--models models         # Directory to save/load models
+```
+
+### Evaluation Mode Options
+
+```pwsh
+# Run trained model once
+uv run python src/scripts/train_and_eval.py eval --config configs/experiments/baseline.yaml --models models
+
+# Evaluation options
+--continuous            # Run multiple episodes continuously
+--mode gui             # Show AirSim window
+--max-steps 1000       # Maximum steps per episode
+```
+
+### Legacy Single-Episode Mode
+
+For single experiment runs (original implementation):
+
+```pwsh
+uv run python src/scripts/run_experiment.py --config configs/experiments/baseline.yaml
+```
+
 Artifacts are written to `artifacts/<timestamp>_<experiment_id>/` including configuration, telemetry, and reward summaries.
+
+## Prerequisites
+
+-   **AirSim Simulator**: Download and install AirSim with a driving environment (Neighbourhood recommended)
+-   **Python 3.12+**: Install via [uv](https://github.com/astral-sh/uv) or standard Python installer
+-   **Dependencies**: Automatically installed via `uv sync` or manually: `airsim`, `stable-baselines3`
+
+## Training Process
+
+The HRL system trains two types of models:
+
+-   **DQN Manager**: Selects high-level commands (FOLLOW_LANE, TURN_LEFT, TURN_RIGHT, STOP)
+-   **SAC Workers**: Execute low-level continuous control (throttle, brake, steering) for each command
+
+During training, you'll see:
+
+-   Real-time reward scores and episode statistics
+-   Periodic model saving (every 10 episodes by default)
+-   Live visualization in AirSim window showing the car learning to drive
+
+## Model Files
+
+Trained models are saved to `models/` directory:
+
+-   `dqn_manager.zip`: High-level command selection policy
+-   `sac_follow_lane.zip`, `sac_turn_left_at_intersection.zip`, etc.: Low-level control policies
 
 ## Reproducibility
 

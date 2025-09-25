@@ -37,8 +37,6 @@ def test_capture_segmentation_returns_integer_mask():
 
 
 def test_yolo_detector_lazy_load(monkeypatch):
-    detections = []
-
     class DummyBoxes:
         def __init__(self) -> None:
             self.xywhn = np.array([[0.5, 0.5, 0.2, 0.1]])
@@ -48,28 +46,30 @@ def test_yolo_detector_lazy_load(monkeypatch):
     class DummyResult:
         boxes = DummyBoxes()
 
-    def fake_loader(repo, model):  # noqa: ARG001 - signature compatibility
-        detections.append((repo, model))
-        return lambda image: [DummyResult()]
+    loaded_models = []
 
-    monkeypatch.setattr(
-        "perception.detector.torch", SimpleNamespace(hub=SimpleNamespace(load=fake_loader))
-    )
+    def fake_yolo(model_name):
+        loaded_models.append(model_name)
+
+        class Model:
+            def __call__(self, image):  # noqa: ARG002
+                return [DummyResult()]
+
+        return Model()
+
+    monkeypatch.setattr("perception.detector.YOLO", fake_yolo)
 
     detector = YoloDetector(model_name="yolov12n")
     output = detector.run_detection(np.zeros((480, 640, 3), dtype=np.uint8))
 
-    assert detections == [("ultralytics/yolov12", "yolov12n")]
+    assert loaded_models == ["yolov12n"]
     assert output == [{"class_id": 1, "bbox": [0.5, 0.5, 0.2, 0.1], "confidence": 0.9}]
 
 
-def test_yolo_detector_fails_without_torch():
-    monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setenv("PYTEST_RUNNING", "1")
-    monkeypatch.setitem(globals(), "torch", None)
+def test_yolo_detector_fails_without_ultralytics(monkeypatch):
+    monkeypatch.setattr("perception.detector.YOLO", None)
     with pytest.raises(ModelLoadError):
         YoloDetector(model_name="yolov12n")
-    monkeypatch.undo()
 
 
 def test_build_observation_inputs_merges_modalities(monkeypatch):

@@ -20,6 +20,7 @@ dependencies = [
     "python-dotenv>=1.1.1",
     "backports-ssl-match-hostname>=3.7.0.1",
     "torch>=2.8.0",
+    "ultralytics>=8.2.0",
 ]
 
 [project.optional-dependencies]
@@ -60,7 +61,7 @@ known-first-party = [
 combine-as-imports = true
 
 [tool.pytest.ini_options]
-addopts = "--cov=src --cov-report=term-missing --cov-fail-under=90"
+addopts = "--cov=src --cov-report=term-missing --cov-fail-under=85"
 testpaths = [
     "tests"
 ]

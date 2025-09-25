@@ -25,7 +25,40 @@ def test_detector_returns_empty_when_model_has_no_predictions():
     assert detector.run_detection(np.zeros((10, 10, 3), dtype=np.uint8)) == []
 
 
-def test_detector_raises_when_torch_missing(monkeypatch):
-    monkeypatch.setattr("perception.detector.torch", None)
+def test_segmentation_adapter_decodes_rgb_buffer():
+    class DummyImage:
+        height = 2
+        width = 2
+        image_data_uint8 = bytes(
+            [
+                1,
+                0,
+                0,
+                2,
+                0,
+                0,
+                3,
+                0,
+                0,
+                4,
+                0,
+                0,
+            ]
+        )
+
+    class RGBClient:
+        def simGetImages(self, requests):  # noqa: N802
+            return [DummyImage()]
+
+    adapter = SegmentationAdapter(RGBClient(), camera_name="0", image_type=5)
+    mask = adapter.capture_segmentation()
+    assert mask.shape == (2, 2)
+    assert mask.dtype == np.int32
+    assert mask[0, 0] == 1
+    assert mask[1, 1] == 4
+
+
+def test_detector_raises_when_ultralytics_missing(monkeypatch):
+    monkeypatch.setattr("perception.detector.YOLO", None)
     with pytest.raises(ModelLoadError):
         YoloDetector()

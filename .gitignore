@@ -21,3 +21,4 @@ yolo*.pt
 
 # Generated files
 *.log
+.coverage

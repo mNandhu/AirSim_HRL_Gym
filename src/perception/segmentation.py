@@ -56,11 +56,18 @@ class SegmentationAdapter:
             raise SegmentationCaptureError("Segmentation response missing required fields")
         array = np.frombuffer(raw, dtype=np.uint8)
         expected = height * width
-        if array.size != expected:
-            raise SegmentationCaptureError(
-                f"Unexpected segmentation buffer size {array.size}, expected {expected}"
-            )
-        return array.reshape(height, width)
+        if array.size == expected:
+            return array.reshape(height, width)
+
+        rgb_expected = expected * 3
+        if array.size == rgb_expected:
+            rgb = array.reshape(height, width, 3).astype(np.uint32)
+            mask = rgb[:, :, 0] + (rgb[:, :, 1] << 8) + (rgb[:, :, 2] << 16)
+            return mask.astype(np.int32)
+
+        raise SegmentationCaptureError(
+            f"Unexpected segmentation buffer size {array.size}, expected {expected} or {rgb_expected}"
+        )
 
     def _create_request(self) -> Any:
         if airsim is not None:
