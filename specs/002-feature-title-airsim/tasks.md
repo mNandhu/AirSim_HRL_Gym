@@ -123,4 +123,6 @@ run_task T035 & run_task T036 & run_task T037 & run_task T038
 -   **T049 Parallel coordinator interface** — extend `CommandCoordinator`/`HRLOrchestrator` to accept batched observations and distribute actions across workers.
 -   **T050 Async perception pipeline** — introduce frame skipping or worker threads so perception keeps up with multiple concurrent simulators.
 -   **T051 Resource orchestration tooling** — add scripts/configs for launching and monitoring parallel jobs (Multi-GPU SB3, multiple AirSim heads) with telemetry on utilization.
--   **T052 Regression & scaling tests** — craft pytest/integration scenarios that exercise the parallel path and compare throughput against the single-run baseline.
+-   **T052 Cross-platform headless support** — implement Linux-compatible AirSim headless launcher alongside existing Windows support, ensuring consistent simulator behavior across platforms.
+-   **T053 Platform-agnostic orchestration** — extend resource orchestration tooling to detect and manage AirSim instances on both Windows and Linux environments with unified configuration.
+-   **T054 Regression & scaling tests** — craft pytest/integration scenarios that exercise the parallel path and compare throughput against the single-run baseline.
