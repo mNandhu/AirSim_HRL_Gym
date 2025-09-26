@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Optional
 from uuid import UUID, uuid4
 
@@ -52,9 +52,7 @@ class ExperimentDefinition(BaseModel):
     horizon: int = Field(..., gt=0)
     seeds: SeedBundle
     weather_profile: Optional[str] = None
-    generated_at: datetime = Field(
-        default_factory=lambda: datetime.now(tz=datetime.utcnow().astimezone().tzinfo)
-    )
+    generated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     config_hash: Optional[str] = None
 
     @field_validator("scene", "vehicle")

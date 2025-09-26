@@ -8,9 +8,10 @@ import subprocess
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Iterator, Sequence
+
 from dotenv import load_dotenv
 
 __all__ = [
@@ -39,7 +40,7 @@ class SimulatorSession:
     process: Any
     mode: str
     settings_path: str
-    start_time: datetime = field(default_factory=lambda: datetime.utcnow())
+    start_time: datetime = field(default_factory=lambda: datetime.now(UTC))
     retries: int = 0
 
 
@@ -156,7 +157,7 @@ def _wait_for_start(process: Any, timeout: float) -> None:
 def _log_failure(event: str, mode: str, attempt: int, exc: Exception) -> None:
     LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     entry = {
-        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         "event": event,
         "mode": mode,
         "attempt": attempt,

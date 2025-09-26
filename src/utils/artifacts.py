@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -34,7 +34,7 @@ class ArtifactManager:
         return self._current_run
 
     def start_run(self, experiment_id: str) -> ArtifactPaths:
-        timestamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+        timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
         run_dir = self._root / f"{timestamp}_{experiment_id}"
         logs_dir = run_dir / "logs"
         run_dir.mkdir(parents=True, exist_ok=True)
