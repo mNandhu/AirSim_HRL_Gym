@@ -124,6 +124,25 @@ Run the full suite with coverage (≥90% for non-learning code):
 uv run pytest --cov=src --cov-report=term-missing
 ```
 
+## Perception Visualization
+
+Inspect the perception pipeline inputs that feed the HRL agent using the interactive
+visualization script. Launch AirSim first, then run:
+
+```pwsh
+uv run python src/scripts/visualize_perception.py --detector-model yolov12n --camera-name 0
+```
+
+The window shows three synchronized views: the raw RGB camera feed, YOLO bounding-box
+annotations, and the segmentation overlay. Use `Ctrl+C` or close the window to stop.
+
+Additional options:
+
+-   `--confidence-threshold`: Filter detections below the given confidence (default `0.25`).
+-   `--save-dir <path>`: Save each rendered frame as a PNG for offline review.
+-   `--dummy`: Generate synthetic frames without AirSim to validate the visualization pipeline.
+-   `--max-frames N`: Capture a fixed number of frames before exiting.
+
 ## Documentation
 
 Reward component behavior is described in `docs/reward-contract.md`. Update the document by invoking `utils.reward_doc.generate_reward_contract` after changing reward logic.
