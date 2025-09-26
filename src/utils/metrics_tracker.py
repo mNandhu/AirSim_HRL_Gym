@@ -168,6 +168,11 @@ class MetricsTracker:
         self._update_graphs()  # Force update after episode completion
         self._save_metrics()
 
+        # Reset state so repeated calls do not duplicate episode metrics.
+        self.current_episode_steps = []
+        self.current_episode = None
+        self.current_episode_start_time = None
+
     def _finish_episode(self, completed_successfully: bool = False) -> None:
         """Internal method to finish episode tracking."""
         if (

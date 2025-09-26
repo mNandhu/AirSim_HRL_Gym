@@ -27,6 +27,8 @@ __all__ = ["SACWorker"]
 class SACWorker:
     """Produces continuous control actions for throttle, brake, and steering."""
 
+    EPSILON = 1e-4  # Used to avoid magic numbers in action selection logic
+
     def __init__(
         self,
         *,
@@ -173,9 +175,12 @@ class SACWorker:
         brake = float(np.clip(brake, 0.0, 1.0))  # [0, 1] for brake
         steering = float(np.clip(steering, -1.0, 1.0))  # [-1, 1] for steering
 
-        # CRITICAL FIX: Ensure throttle and brake are mutually exclusive
-        # In real driving, you don't press gas and brake simultaneously
-        if throttle > 0.1 and brake > 0.1:  # If both are significant
+        # Ensure throttle and brake are mutually exclusive while tolerating
+        # floating-point noise around the decision threshold. A tiny epsilon
+        # avoids clobbering near-zero throttle values produced by tests and
+        # deterministic policies.
+        epsilon = self.EPSILON
+        if throttle > 0.1 + epsilon and brake > 0.1 + epsilon:  # If both are significant
             # Choose the dominant action
             if throttle > brake:
                 brake = 0.0  # Prioritize throttle

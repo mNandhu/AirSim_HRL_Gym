@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -92,3 +93,138 @@ def test_dqn_manager_load_requires_sb3(monkeypatch):
     monkeypatch.setattr("hrl_agent.manager.dqn_manager.DQN", None)
     with pytest.raises(RuntimeError):
         manager.load_from_path("model.zip")
+
+
+def test_sac_worker_process_experience_trains_and_logs():
+    class DummyReplayBuffer:
+        def __init__(self) -> None:
+            self.calls: list[
+                tuple[
+                    np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, list[dict[str, Any]]
+                ]
+            ] = []
+
+        def add(self, obs, next_obs, action, reward_arr, done_arr, infos):
+            self.calls.append((obs, next_obs, action, reward_arr, done_arr, infos))
+
+    class DummyLogger:
+        def __init__(self) -> None:
+            self.records: list[tuple[str, float]] = []
+            self.dumps: list[int] = []
+
+        def record(self, key: str, value: float) -> None:
+            self.records.append((key, value))
+
+        def dump(self, step: int) -> None:  # noqa: D401 - mimic sb3 logger API
+            self.dumps.append(step)
+
+    class DummyModel:
+        def __init__(self) -> None:
+            self.replay_buffer = DummyReplayBuffer()
+            self.learning_starts = 1
+            self.batch_size = 4
+            self.logger = DummyLogger()
+            self._total_timesteps = 0
+            self._n_updates = 0
+            self.train_args: list[tuple[int, int]] = []
+
+        def train(self, *, batch_size: int, gradient_steps: int) -> None:
+            self.train_args.append((batch_size, gradient_steps))
+
+    worker = SACWorker()
+    model = DummyModel()
+    worker.attach_model(model)
+    worker._steps = 99  # Force logging branch on next experience
+
+    worker.process_experience(
+        observation=np.zeros(5, dtype=np.float32),
+        action=np.array([0.1, 0.2, -0.3], dtype=np.float32),
+        reward=1.5,
+        next_observation=np.ones(5, dtype=np.float32),
+        done=True,
+    )
+
+    assert len(model.replay_buffer.calls) == 1
+    assert model.train_args == [(model.batch_size, 1)]
+    assert model._total_timesteps == 1
+    assert model._n_updates == 1
+    assert model.logger.dumps == [100]
+    assert any(key == "train/reward" for key, _ in model.logger.records)
+
+
+def test_sac_worker_handles_empty_and_overflow_actions():
+    class EmptyModel:
+        def predict(self, observation, deterministic=True):
+            return np.array([], dtype=np.float32), None
+
+    class WideModel:
+        def predict(self, observation, deterministic=True):
+            return np.array([0.9, 0.8, -0.4, 0.3], dtype=np.float32), None
+
+    worker = SACWorker()
+    worker.attach_model(EmptyModel())
+    empty_action = worker.act({}, deterministic=True)
+    assert empty_action == {"throttle": 0.0, "brake": 0.0, "steering": 0.0}
+
+    worker.attach_model(WideModel())
+    rich_action = worker.act({}, deterministic=True)
+    assert rich_action["throttle"] == pytest.approx(0.9)
+    assert rich_action["brake"] == 0.0  # brake suppressed by throttle dominance
+    assert rich_action["steering"] == pytest.approx(-0.4)
+
+
+def test_dqn_manager_process_experience_trains_and_logs():
+    class DummyReplayBuffer:
+        def __init__(self) -> None:
+            self.calls: list[
+                tuple[
+                    np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, list[dict[str, Any]]
+                ]
+            ] = []
+
+        def add(self, obs, next_obs, action, reward_arr, done_arr, infos):
+            self.calls.append((obs, next_obs, action, reward_arr, done_arr, infos))
+
+    class DummyLogger:
+        def __init__(self) -> None:
+            self.records: list[tuple[str, float]] = []
+            self.dumps: list[int] = []
+
+        def record(self, key: str, value: float) -> None:
+            self.records.append((key, value))
+
+        def dump(self, step: int) -> None:
+            self.dumps.append(step)
+
+    class DummyModel:
+        def __init__(self) -> None:
+            self.replay_buffer = DummyReplayBuffer()
+            self.learning_starts = 1
+            self.batch_size = 2
+            self.logger = DummyLogger()
+            self._total_timesteps = 0
+            self._n_updates = 0
+            self.train_args: list[tuple[int, int]] = []
+
+        def train(self, *, batch_size: int, gradient_steps: int) -> None:
+            self.train_args.append((batch_size, gradient_steps))
+
+    manager = DQNManager(CommandPolicy(commands=["LEFT", "RIGHT"]))
+    model = DummyModel()
+    manager.attach_model(model)
+    manager._steps = 99
+
+    manager.process_experience(
+        observation=np.zeros(5, dtype=np.float32),
+        action_index=1,
+        reward=2.0,
+        next_observation=np.ones(5, dtype=np.float32),
+        done=False,
+    )
+
+    assert len(model.replay_buffer.calls) == 1
+    assert model.train_args == [(model.batch_size, 1)]
+    assert model._total_timesteps == 1
+    assert model._n_updates == 1
+    assert model.logger.dumps == [100]
+    assert any(key == "train/command_selection_step" for key, _ in model.logger.records)

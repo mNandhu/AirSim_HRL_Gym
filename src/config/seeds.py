@@ -43,10 +43,20 @@ def apply_seed_bundle(bundle: SeedBundle, *, airsim_client: Any | None = None) -
 
     random.seed(bundle.python)
 
-    if np is not None:
+    has_numpy = np is not None
+    has_torch = torch is not None
+
+    if not has_numpy and not has_torch:
+        raise SeedApplicationError(
+            "Cannot apply seed bundle because both NumPy and PyTorch are unavailable"
+        )
+
+    if has_numpy:
+        assert np is not None  # narrow type for static analyzers
         np.random.seed(bundle.numpy)
 
-    if torch is not None:
+    if has_torch:
+        assert torch is not None
         torch.manual_seed(bundle.torch)
         if torch.cuda.is_available():  # pragma: no cover - hardware dependent
             torch.cuda.manual_seed_all(bundle.torch)

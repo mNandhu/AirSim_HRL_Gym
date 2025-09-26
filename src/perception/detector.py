@@ -54,7 +54,16 @@ class YoloDetector:
     def run_detection(self, image: Any) -> list[dict[str, Any]]:
         if image is None:
             return []
-        predictions = self._model(image, verbose=False)
+        try:
+            predictions = self._model(image, verbose=False)
+        except TypeError as exc:
+            message = str(exc).lower()
+            if "unexpected keyword" in message and "verbose" in message:
+                predictions = self._model(image)
+            elif "got an unexpected keyword argument" in message and "verbose" in message:
+                predictions = self._model(image)
+            else:
+                raise
         if not predictions:
             return []
         first = predictions[0]
