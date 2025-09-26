@@ -193,7 +193,26 @@ class DQNManager:
         if self._steps >= getattr(self._model, "learning_starts", self._learning_starts):
             batch_size = getattr(self._model, "batch_size", 64)
             self._model.train(batch_size=batch_size, gradient_steps=1)
+
+            # Update SB3's internal timestep counters for proper logging
             if hasattr(self._model, "_total_timesteps"):
                 self._model._total_timesteps += 1  # type: ignore[attr-defined]
             if hasattr(self._model, "_n_updates"):
                 self._model._n_updates += 1  # type: ignore[attr-defined]
+
+            # Trigger SB3 logging every 100 training steps to populate progress.csv
+            if self._steps % 100 == 0:
+                if hasattr(self._model, "logger") and self._model.logger is not None:
+                    # Log training metrics that SB3 typically tracks
+                    self._model.logger.record("time/total_timesteps", self._steps)
+                    self._model.logger.record("rollout/ep_len_mean", self._steps)
+
+                    # Log recent reward if we have access to it
+                    if reward_arr.size > 0:
+                        self._model.logger.record("train/reward", float(reward_arr[0]))
+
+                    # Log command selection metrics for DQN
+                    self._model.logger.record("train/command_selection_step", self._steps)
+
+                    # Dump the logs to CSV file
+                    self._model.logger.dump(step=self._steps)
