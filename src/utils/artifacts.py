@@ -22,7 +22,13 @@ class ArtifactManager:
     """Manage per-run artifact directories and structured logging."""
 
     def __init__(self, root: Path | str = "artifacts") -> None:
-        self._root = Path(root)
+        # If root is a relative path, resolve to cwd
+        root_path = Path(root)
+        # If root is absolute, use as-is; if relative, resolve to cwd/artifacts
+        if root_path.is_absolute():
+            self._root = root_path
+        else:
+            self._root = Path.cwd() / root_path
         self._current_run: ArtifactPaths | None = None
 
     @property
@@ -33,9 +39,13 @@ class ArtifactManager:
     def current_run(self) -> ArtifactPaths | None:
         return self._current_run
 
-    def start_run(self, experiment_id: str) -> ArtifactPaths:
+    def start_run(self, experiment_id: str, *, timestamp_first: bool = True) -> ArtifactPaths:
         timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-        run_dir = self._root / f"{timestamp}_{experiment_id}"
+        if timestamp_first:
+            folder_name = f"{timestamp}_{experiment_id}"
+        else:
+            folder_name = f"{experiment_id}_{timestamp}"
+        run_dir = self._root / folder_name
         logs_dir = run_dir / "logs"
         run_dir.mkdir(parents=True, exist_ok=True)
         logs_dir.mkdir(parents=True, exist_ok=True)

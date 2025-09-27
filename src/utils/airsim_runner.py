@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -27,7 +28,20 @@ __all__ = [
 load_dotenv()
 
 LOG_PATH = Path("simulator_failures.log")
-DEFAULT_EXECUTABLE = os.environ.get("AIRSIM_EXECUTABLE", "AirSimNH.exe")
+IS_WINDOWS = os.name == "nt"
+IS_LINUX = sys.platform.startswith("linux")
+
+
+def _default_executable() -> str:
+    env_override = os.environ.get("AIRSIM_EXECUTABLE")
+    if env_override:
+        return env_override
+    if IS_WINDOWS:
+        return "AirSimNH.exe"
+    return "./AirSimNH.sh"
+
+
+DEFAULT_EXECUTABLE = _default_executable()
 
 
 class SimulatorLaunchError(RuntimeError):
@@ -139,10 +153,27 @@ def airsim_session(
 
 
 def _build_command(mode: str, settings_path: str) -> list[str]:
-    cmd = [DEFAULT_EXECUTABLE, "-settings", settings_path]
+    executable = DEFAULT_EXECUTABLE
+    cmd = _resolve_base_command(executable)
+    cmd.extend(["-settings", settings_path])
     if mode == "headless":
-        cmd.append("-RenderOffScreen")
+        cmd.extend(_headless_flags())
     return cmd
+
+
+def _resolve_base_command(executable: str) -> list[str]:
+    if IS_WINDOWS:
+        return [executable]
+    if executable.endswith(".sh"):
+        return ["bash", executable]
+    return [executable]
+
+
+def _headless_flags() -> list[str]:
+    if IS_WINDOWS:
+        return ["-RenderOffScreen"]
+    # On Linux, provide additional hints for offscreen rendering
+    return ["-RenderOffScreen", "-windowed", "-nosound"]
 
 
 def _wait_for_start(process: Any, timeout: float) -> None:

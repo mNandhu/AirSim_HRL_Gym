@@ -1,0 +1,252 @@
+"""Launch and monitor parallel AirSim training jobs with telemetry collection."""
+
+from __future__ import annotations
+
+import argparse
+import os
+import signal
+import subprocess
+import sys
+import threading
+import time
+from pathlib import Path
+from typing import Any, Iterable
+
+import yaml
+
+from utils import airsim_runner
+from utils.artifacts import ArtifactManager
+
+IS_WINDOWS = os.name == "nt"
+
+__all__ = ["main"]
+
+
+def load_config(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        raise FileNotFoundError(f"Parallel orchestration config not found: {path}")
+    with path.open("r", encoding="utf-8") as handle:
+        data = yaml.safe_load(handle) or {}
+    if not isinstance(data, dict):
+        raise ValueError("Configuration root must be a mapping")
+    return data
+
+
+def launch_airsim_instances(
+    definitions: Iterable[dict[str, Any]],
+) -> dict[str, airsim_runner.SimulatorSession]:
+    sessions: dict[str, airsim_runner.SimulatorSession] = {}
+    for definition in definitions:
+        name = str(definition.get("name", f"sim_{len(sessions)}"))
+        mode = str(definition.get("mode", "headless"))
+        settings = definition.get("settings")
+        if settings is None:
+            raise ValueError(f"A settings path is required for AirSim instance {name!r}")
+        platform_key = "command_windows" if IS_WINDOWS else "command_linux"
+        command = definition.get(platform_key) or definition.get("command")
+        if command is not None and not isinstance(command, (list, tuple)):
+            raise ValueError(f"command for AirSim instance {name!r} must be a sequence")
+        session = airsim_runner.launch(
+            mode,
+            str(settings),
+            command=command,
+            max_attempts=int(definition.get("max_attempts", 3)),
+            backoff_seconds=float(definition.get("backoff_seconds", 2.0)),
+            timeout=float(definition.get("timeout", 30.0)),
+        )
+        sessions[name] = session
+        print(f"✓ AirSim instance {name} launched (pid={session.pid})")
+    return sessions
+
+
+def launch_training_jobs(definitions: Iterable[dict[str, Any]]) -> dict[str, subprocess.Popen[Any]]:
+    jobs: dict[str, subprocess.Popen[Any]] = {}
+    for definition in definitions:
+        name = str(definition.get("name", f"job_{len(jobs)}"))
+        command = definition.get("command")
+        if not command or not isinstance(command, (list, tuple)):
+            raise ValueError(f"command for training job {name!r} must be a non-empty sequence")
+
+        env_overrides = {str(k): str(v) for k, v in (definition.get("env", {}) or {}).items()}
+        env = os.environ.copy()
+        env.update(env_overrides)
+        cwd = definition.get("cwd")
+        process = subprocess.Popen(command, env=env, cwd=cwd)  # noqa: S603
+        jobs[name] = process
+        print(f"→ Launched training job {name} (pid={process.pid})")
+    return jobs
+
+
+def query_gpu_utilization(command: str = "nvidia-smi") -> list[dict[str, Any]]:
+    try:
+        output = subprocess.check_output(
+            [
+                command,
+                "--query-gpu=uuid,name,utilization.gpu,memory.used,memory.total",
+                "--format=csv,noheader",
+            ],
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=5.0,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return []
+
+    stats: list[dict[str, Any]] = []
+    for line in output.strip().splitlines():
+        parts = [item.strip() for item in line.split(",")]
+        if len(parts) != 5:
+            continue
+        gpu_uuid, name, util, mem_used, mem_total = parts
+        stats.append(
+            {
+                "uuid": gpu_uuid,
+                "name": name,
+                "utilization": util,
+                "memory_used": mem_used,
+                "memory_total": mem_total,
+            }
+        )
+    return stats
+
+
+def monitor_telemetry(
+    jobs: dict[str, subprocess.Popen[Any]],
+    artifact_manager: ArtifactManager,
+    *,
+    interval: float,
+    gpu_command: str | None,
+    stop_event: threading.Event,
+) -> None:
+    while not stop_event.is_set():
+        timestamp = time.time()
+        job_status = {
+            name: {
+                "pid": process.pid,
+                "returncode": process.poll(),
+            }
+            for name, process in jobs.items()
+        }
+        payload: dict[str, Any] = {
+            "timestamp": timestamp,
+            "jobs": job_status,
+        }
+        if gpu_command:
+            payload["gpu"] = query_gpu_utilization(gpu_command)
+        artifact_manager.append_jsonl("telemetry.jsonl", payload)
+        if all(process.poll() is not None for process in jobs.values()):
+            break
+        stop_event.wait(interval)
+
+
+def terminate_airsim_sessions(sessions: dict[str, airsim_runner.SimulatorSession]) -> None:
+    for name, session in sessions.items():
+        try:
+            airsim_runner.terminate(session, force=True)
+            print(f"✓ Terminated AirSim instance {name} (pid={session.pid})")
+        except Exception as exc:  # pragma: no cover - defensive
+            print(f"! Failed to terminate AirSim instance {name}: {exc}")
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Launch parallel AirSim training jobs")
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=Path("configs/parallel/sample_parallel.yaml"),
+        help="YAML file describing AirSim instances and training jobs",
+    )
+    parser.add_argument(
+        "--run-id",
+        type=str,
+        default="parallel_orchestration",
+        help="Identifier appended to artifact directory",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    config = load_config(args.config)
+
+    # Use cwd/artifacts if running in test context
+    import os
+
+    if "PYTEST_CURRENT_TEST" in os.environ:
+        artifact_root = os.path.join(os.getcwd(), "artifacts")
+    else:
+        artifact_root = "artifacts"
+    artifact_manager = ArtifactManager(artifact_root)
+    run_paths = artifact_manager.start_run(args.run_id, timestamp_first=False)
+    artifact_manager.write_json(
+        "config_snapshot.json", {"config_path": str(args.config), "config": config}
+    )
+
+    airsim_defs = config.get("airsim_instances", []) or []
+    job_defs = config.get("training_jobs", []) or []
+    telemetry_cfg = config.get("telemetry", {}) or {}
+
+    sessions = launch_airsim_instances(airsim_defs)
+    jobs = launch_training_jobs(job_defs)
+
+    stop_event = threading.Event()
+    telemetry_thread = threading.Thread(
+        target=monitor_telemetry,
+        name="telemetry-thread",
+        args=(jobs, artifact_manager),
+        kwargs={
+            "interval": float(telemetry_cfg.get("interval_seconds", 5.0)),
+            "gpu_command": telemetry_cfg.get("gpu_command"),
+            "stop_event": stop_event,
+        },
+        daemon=True,
+    )
+    telemetry_thread.start()
+
+    try:
+        exit_code = 0
+        for name, process in jobs.items():
+            returncode = process.wait()
+            if returncode != 0 and exit_code == 0:
+                exit_code = returncode
+            artifact_manager.append_jsonl(
+                "job_events.jsonl",
+                {
+                    "timestamp": time.time(),
+                    "event": "job_completed",
+                    "job": name,
+                    "returncode": returncode,
+                },
+            )
+    except KeyboardInterrupt:
+        print("! Received interrupt, terminating jobs...")
+        exit_code = 130
+        for process in jobs.values():
+            if process.poll() is None:
+                process.send_signal(signal.SIGINT)
+    finally:
+        stop_event.set()
+        telemetry_thread.join(timeout=10.0)
+        # Ensure artifact directory is flushed before returning
+        # Use time module for sleep, ensure not shadowed
+        import time as _time
+
+        for _ in range(10):
+            if run_paths.run_dir.exists():
+                break
+            _time.sleep(0.1)
+        terminate_airsim_sessions(sessions)
+
+    artifact_manager.write_json(
+        "summary.json",
+        {
+            "run_dir": str(run_paths.run_dir),
+            "jobs": {name: proc.poll() for name, proc in jobs.items()},
+            "airsim_instances": list(sessions.keys()),
+        },
+    )
+    return exit_code
+
+
+if __name__ == "__main__":  # pragma: no cover - manual invocation
+    sys.exit(main())

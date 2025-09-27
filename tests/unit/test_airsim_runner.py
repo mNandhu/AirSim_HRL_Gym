@@ -56,6 +56,26 @@ def test_launch_headless_includes_offscreen_flag(monkeypatch, settings_path):
     assert session.settings_path == str(settings_path)
 
 
+def test_build_command_linux_headless(monkeypatch, settings_path):
+    created_cmds = []
+
+    def fake_popen(cmd, *args, **kwargs):  # noqa: ANN001 - mimic subprocess signature
+        created_cmds.append(cmd)
+        return DummyProcess()
+
+    monkeypatch.setattr(airsim_runner, "IS_WINDOWS", False)
+    monkeypatch.setattr(airsim_runner, "DEFAULT_EXECUTABLE", "./AirSimNH.sh")
+    monkeypatch.setattr(airsim_runner, "subprocess", SimpleNamespace(Popen=fake_popen))
+    monkeypatch.setattr(airsim_runner, "_wait_for_start", lambda process, timeout: None)
+
+    launch("headless", str(settings_path))
+
+    cmd = created_cmds[0]
+    assert cmd[:2] == ["bash", "./AirSimNH.sh"]
+    assert "-windowed" in cmd
+    assert "-nosound" in cmd
+
+
 def test_launch_retries_then_succeeds(monkeypatch, settings_path):
     attempts = []
 

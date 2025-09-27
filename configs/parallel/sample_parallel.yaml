@@ -1,0 +1,55 @@
+# Sample configuration for the parallel orchestration script.
+telemetry:
+    interval_seconds: 5
+    gpu_command: nvidia-smi
+
+airsim_instances:
+    - name: sim_headless_0
+      mode: headless
+      settings: settings.json
+      # Optional platform-specific executable overrides. When omitted, the script
+      # falls back to utils.airsim_runner platform defaults.
+      command_windows:
+          - G:\Projects\HRL_SelfDrivingCar\AirSimNH\WindowsNoEditor\AirSimNH.exe
+          - -settings
+          - settings.json
+          - -RenderOffScreen
+      command_linux:
+          - bash
+          - ./AirSimNH.sh
+          - -settings
+          - settings.json
+          - -RenderOffScreen
+          - -windowed
+      max_attempts: 3
+      backoff_seconds: 2.0
+      timeout: 45
+
+training_jobs:
+    - name: trainer_gpu0
+      command:
+          - uv
+          - run
+          - python
+          - src/scripts/train_and_eval.py
+          - train
+          - --config
+          - configs/experiments/training.yaml
+          - --episodes
+          - "10"
+      env:
+          CUDA_VISIBLE_DEVICES: "0"
+
+    - name: trainer_gpu1
+      command:
+          - uv
+          - run
+          - python
+          - src/scripts/train_and_eval.py
+          - train
+          - --config
+          - configs/experiments/training.yaml
+          - --episodes
+          - "10"
+      env:
+          CUDA_VISIBLE_DEVICES: "0"

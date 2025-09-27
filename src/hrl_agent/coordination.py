@@ -15,6 +15,9 @@ from .workers.sac_worker import SACWorker
 __all__ = ["CommandCoordinator", "CoordinatorState"]
 
 
+DEFAULT_ENVIRONMENT_ID = "__singleton_env__"
+
+
 @dataclass
 class CoordinatorState:
     command: str | None = None
@@ -38,15 +41,32 @@ class CommandCoordinator:
         self._manager = manager
         self._workers = dict(workers)
         self._state = CoordinatorState()
+        self._per_env_state: dict[str, CoordinatorState] = {}
         self._schedule = list(self._workers.keys())
         self._schedule_index = 0
 
     @property
     def state(self) -> CoordinatorState:
-        return self._state
+        return self._per_env_state.get(DEFAULT_ENVIRONMENT_ID, self._state)
 
     def act(
         self, observation: Any, *, deterministic: bool = True
+    ) -> tuple[str, Mapping[str, float]]:
+        command, action = self.act_for_env(
+            DEFAULT_ENVIRONMENT_ID, observation, deterministic=deterministic
+        )
+        return command, action
+
+    def act_batch(
+        self, observations: Mapping[str, Any], *, deterministic: bool = True
+    ) -> dict[str, tuple[str, Mapping[str, float]]]:
+        results: dict[str, tuple[str, Mapping[str, float]]] = {}
+        for env_id, observation in observations.items():
+            results[env_id] = self.act_for_env(env_id, observation, deterministic=deterministic)
+        return results
+
+    def act_for_env(
+        self, env_id: str, observation: Any, *, deterministic: bool = True
     ) -> tuple[str, Mapping[str, float]]:
         features = self._vectorize_observation(observation)
 
@@ -54,7 +74,6 @@ class CommandCoordinator:
         command = self._manager.select_command(command_input, deterministic=deterministic)
         worker = self._workers.get(command)
         if worker is None:
-            # Default to the first worker if specific command missing
             worker = next(iter(self._workers.values()))
 
         worker_input = self._adapt_features(features, self._worker_input_dim(worker))
@@ -62,14 +81,18 @@ class CommandCoordinator:
         telemetry = self._extract_telemetry(observation)
         start_distance = telemetry.get("distance_to_goal")
         heading = telemetry.get("heading_deg")
-        self._state = CoordinatorState(
+
+        state = CoordinatorState(
             command=command,
             last_action=action,
             manager_features=command_input,
             worker_features=worker_input,
-            command_start_distance=start_distance,
-            command_start_heading=heading,
+            command_start_distance=float(start_distance) if start_distance is not None else None,
+            command_start_heading=float(heading) if heading is not None else None,
         )
+        self._per_env_state[env_id] = state
+        if env_id == DEFAULT_ENVIRONMENT_ID:
+            self._state = state
         return command, action
 
     def update_command_policy(self, policy: CommandPolicy) -> None:
@@ -95,18 +118,22 @@ class CommandCoordinator:
         return command, action
 
     def command_completed(self, observation: Any) -> bool:
-        if self._state.command is None or self._state.manager_features is None:
+        return self.command_completed_for_env(DEFAULT_ENVIRONMENT_ID, observation)
+
+    def command_completed_for_env(self, env_id: str, observation: Any) -> bool:
+        state = self._per_env_state.get(env_id)
+        if state is None or state.command is None or state.manager_features is None:
             return False
         telemetry = self._extract_telemetry(observation)
         if not telemetry:
             return False
 
-        command = self._state.command
+        command = state.command
         speed = float(telemetry.get("speed_mps", 0.0))
         distance = float(telemetry.get("distance_to_goal", 0.0))
         heading = float(telemetry.get("heading_deg", 0.0))
-        start_distance = self._state.command_start_distance
-        start_heading = self._state.command_start_heading
+        start_distance = state.command_start_distance
+        start_heading = state.command_start_heading
 
         completed = False
         if command == "STOP":
@@ -131,22 +158,40 @@ class CommandCoordinator:
         *,
         done: bool,
     ) -> None:
-        if self._state.command is None or self._state.manager_features is None:
+        self.observe_transition_for_env(
+            DEFAULT_ENVIRONMENT_ID,
+            previous_observation,
+            reward,
+            next_observation,
+            done=done,
+        )
+
+    def observe_transition_for_env(
+        self,
+        env_id: str,
+        previous_observation: Any,
+        reward: float,
+        next_observation: Any,
+        *,
+        done: bool,
+    ) -> None:
+        state = self._per_env_state.get(env_id)
+        if state is None or state.command is None or state.manager_features is None:
             return
 
         next_features = self._vectorize_observation(next_observation)
-        action_index = self._manager.policy.index_of(self._state.command)
+        action_index = self._manager.policy.index_of(state.command)
         self._manager.process_experience(
-            self._state.manager_features,
+            state.manager_features,
             action_index,
             reward,
             next_features,
             done,
         )
 
-        last_action = self._state.last_action or {}
-        worker = self._workers.get(self._state.command)
-        if worker is not None and self._state.worker_features is not None:
+        last_action = state.last_action or {}
+        worker = self._workers.get(state.command)
+        if worker is not None and state.worker_features is not None:
             worker_action = np.array(
                 [
                     float(last_action.get("throttle", 0.0)),
@@ -155,7 +200,7 @@ class CommandCoordinator:
                 ],
                 dtype=np.float32,
             )
-            worker_features = self._state.worker_features
+            worker_features = state.worker_features
             next_worker_features = self._adapt_features(
                 self._vectorize_observation(next_observation),
                 self._worker_input_dim(worker),
@@ -170,6 +215,10 @@ class CommandCoordinator:
 
     def reset(self) -> None:
         self._state = CoordinatorState()
+        self._per_env_state.clear()
+
+    def reset_env(self, env_id: str) -> None:
+        self._per_env_state.pop(env_id, None)
 
     def _vectorize_observation(self, observation: Any) -> np.ndarray:
         if isinstance(observation, ObservationPacket):

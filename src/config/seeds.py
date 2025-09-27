@@ -95,4 +95,37 @@ def _apply_airsim_seed(seed: int, *, airsim_client: Any | None, deterministic: b
     os.environ["AIRSIM_DETERMINISTIC"] = "1" if deterministic else "0"
 
 
-__all__ = ["SeedApplicationError", "apply_seed_bundle"]
+def derive_seed_bundle(bundle: SeedBundle, *, offset: int, stride: int = 9973) -> SeedBundle:
+    """Derive a deterministic seed bundle for parallel environments.
+
+    Parameters
+    ----------
+    bundle:
+        The base :class:`SeedBundle` to offset.
+    offset:
+        Zero-based index identifying the derived bundle. ``0`` returns the original bundle.
+    stride:
+        Increment applied per offset step. Defaults to ``9973`` (prime) to minimise collisions.
+
+    Returns
+    -------
+    SeedBundle
+        A new bundle with each seed offset to ensure isolation between environments.
+    """
+
+    if offset < 0:
+        raise ValueError("offset must be non-negative")
+    if offset == 0:
+        return bundle
+
+    delta = offset * stride
+    return SeedBundle(
+        python=bundle.python + delta,
+        numpy=bundle.numpy + delta,
+        torch=bundle.torch + delta,
+        airsim=bundle.airsim + delta,
+        deterministic=bundle.deterministic,
+    )
+
+
+__all__ = ["SeedApplicationError", "apply_seed_bundle", "derive_seed_bundle"]
