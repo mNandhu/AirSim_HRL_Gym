@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import signal
 import subprocess
@@ -32,23 +33,69 @@ def load_config(path: Path) -> dict[str, Any]:
     return data
 
 
+def _generate_settings_file(
+    base_settings_path: Path, output_dir: Path, instance_index: int, base_port: int
+) -> Path:
+    if not base_settings_path.exists():
+        raise FileNotFoundError(f"Base settings file not found: {base_settings_path}")
+
+    with base_settings_path.open("r", encoding="utf-8") as handle:
+        settings_data = json.load(handle)
+
+    settings_data["ApiServerPort"] = base_port + instance_index
+    output_path = output_dir / f"settings_{instance_index}.json"
+    with output_path.open("w", encoding="utf-8") as handle:
+        json.dump(settings_data, handle, indent=2)
+
+    return output_path
+
+
 def launch_airsim_instances(
     definitions: Iterable[dict[str, Any]],
+    *,
+    run_dir: Path,
+    base_port: int,
 ) -> dict[str, airsim_runner.SimulatorSession]:
     sessions: dict[str, airsim_runner.SimulatorSession] = {}
-    for definition in definitions:
-        name = str(definition.get("name", f"sim_{len(sessions)}"))
+    for i, definition in enumerate(definitions):
+        name = str(definition.get("name", f"sim_{i}"))
         mode = str(definition.get("mode", "headless"))
-        settings = definition.get("settings")
-        if settings is None:
+        base_settings = definition.get("settings")
+        if base_settings is None:
             raise ValueError(f"A settings path is required for AirSim instance {name!r}")
+
+        assigned_port = base_port + i
+        settings_path = _generate_settings_file(Path(base_settings), run_dir, i, base_port)
+
         platform_key = "command_windows" if IS_WINDOWS else "command_linux"
-        command = definition.get(platform_key) or definition.get("command")
+        command_template = definition.get(platform_key) or definition.get("command")
+
+        # Replace placeholder with the actual settings path
+        if command_template:
+            command = [
+                arg.replace("{settings_path}", str(settings_path)) for arg in command_template
+            ]
+            # Normalize "-settings", "<path>" into a single token "-settings=<path>"
+            try:
+                idx = command.index("-settings")
+                if idx + 1 < len(command):
+                    path_arg = command[idx + 1]
+                    command[idx : idx + 2] = [f"-settings={path_arg}"]
+            except ValueError:
+                # No "-settings" token found; leave as-is
+                pass
+        else:
+            command = None
+
         if command is not None and not isinstance(command, (list, tuple)):
             raise ValueError(f"command for AirSim instance {name!r} must be a sequence")
+
+        # Mapping print for clarity
+        print(f"• Mapping: AirSim {name} -> port {assigned_port}, settings={settings_path}")
+
         session = airsim_runner.launch(
             mode,
-            str(settings),
+            str(settings_path),
             command=command,
             max_attempts=int(definition.get("max_attempts", 3)),
             backoff_seconds=float(definition.get("backoff_seconds", 2.0)),
@@ -59,10 +106,14 @@ def launch_airsim_instances(
     return sessions
 
 
-def launch_training_jobs(definitions: Iterable[dict[str, Any]]) -> dict[str, subprocess.Popen[Any]]:
+def launch_training_jobs(
+    definitions: Iterable[dict[str, Any]],
+    *,
+    base_port: int,
+) -> dict[str, subprocess.Popen[Any]]:
     jobs: dict[str, subprocess.Popen[Any]] = {}
-    for definition in definitions:
-        name = str(definition.get("name", f"job_{len(jobs)}"))
+    for i, definition in enumerate(definitions):
+        name = str(definition.get("name", f"job_{i}"))
         command = definition.get("command")
         if not command or not isinstance(command, (list, tuple)):
             raise ValueError(f"command for training job {name!r} must be a non-empty sequence")
@@ -70,6 +121,16 @@ def launch_training_jobs(definitions: Iterable[dict[str, Any]]) -> dict[str, sub
         env_overrides = {str(k): str(v) for k, v in (definition.get("env", {}) or {}).items()}
         env = os.environ.copy()
         env.update(env_overrides)
+
+        assigned_port = base_port + i
+        env["AIRSIM_PORT"] = str(assigned_port)
+        env["AIRSIM_HOST"] = "127.0.0.1"
+
+        # Mapping print for clarity
+        gpu_info = env_overrides.get("CUDA_VISIBLE_DEVICES")
+        gpu_suffix = f", gpu={gpu_info}" if gpu_info is not None else ""
+        print(f"• Mapping: Trainer {name} -> {env['AIRSIM_HOST']}:{env['AIRSIM_PORT']}{gpu_suffix}")
+
         cwd = definition.get("cwd")
         process = subprocess.Popen(command, env=env, cwd=cwd)  # noqa: S603
         jobs[name] = process
@@ -162,6 +223,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="parallel_orchestration",
         help="Identifier appended to artifact directory",
     )
+    parser.add_argument(
+        "--base-port",
+        type=int,
+        default=41451,
+        help="Base port for AirSim API servers",
+    )
     return parser.parse_args(argv)
 
 
@@ -186,8 +253,10 @@ def main(argv: list[str] | None = None) -> int:
     job_defs = config.get("training_jobs", []) or []
     telemetry_cfg = config.get("telemetry", {}) or {}
 
-    sessions = launch_airsim_instances(airsim_defs)
-    jobs = launch_training_jobs(job_defs)
+    sessions = launch_airsim_instances(
+        airsim_defs, run_dir=run_paths.run_dir, base_port=args.base_port
+    )
+    jobs = launch_training_jobs(job_defs, base_port=args.base_port)
 
     stop_event = threading.Event()
     telemetry_thread = threading.Thread(

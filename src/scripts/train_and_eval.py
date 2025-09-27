@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import argparse
 import math
+import os
 import time
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, Sequence, cast
 
@@ -248,6 +250,17 @@ def _create_coordinator(
     return CommandCoordinator(manager, workers)
 
 
+def _sim_context(mode: str, settings_path: str):
+    """Return a no-op context if an external AirSim instance is provided via env vars.
+
+    When AIRSIM_PORT is present, we assume an orchestrator launched the simulator and
+    we should not spawn another one. Otherwise, create an AirSim session locally.
+    """
+    if os.environ.get("AIRSIM_PORT"):
+        return nullcontext()
+    return airsim_session(mode=mode, settings_path=settings_path)
+
+
 def train_mode(args) -> int:
     """Training mode - train the HRL agents while showing progress."""
     print("🚗 Starting HRL Training Mode")
@@ -263,9 +276,8 @@ def train_mode(args) -> int:
     model_dir = Path(args.models)
     model_dir.mkdir(exist_ok=True, parents=True)
 
-    with airsim_session(mode=args.mode, settings_path=args.settings):
-        client = airsim.CarClient()
-        client.confirmConnection()
+    with _sim_context(mode=args.mode, settings_path=args.settings):
+        client = _get_airsim_client()
         client.enableApiControl(True)
         client.armDisarm(True)
 
@@ -376,6 +388,18 @@ def train_mode(args) -> int:
     return 0
 
 
+def _get_airsim_client() -> airsim.CarClient:
+    """Get an AirSim client, connecting to a host and port from environment variables if available."""
+    import os
+
+    host = os.environ.get("AIRSIM_HOST", "127.0.0.1")
+    port = int(os.environ.get("AIRSIM_PORT", 41451))
+
+    client = airsim.CarClient(ip=host, port=port)
+    client.confirmConnection()
+    return client
+
+
 def inference_mode(args) -> int:
     """Inference mode - run trained model for evaluation."""
     print("🤖 Starting HRL Inference Mode")
@@ -387,9 +411,8 @@ def inference_mode(args) -> int:
     run_paths = artifact_manager.start_run(f"eval_{experiment.id}")
     completed_episodes = 0
 
-    with airsim_session(mode=args.mode, settings_path=args.settings):
-        client = airsim.CarClient()
-        client.confirmConnection()
+    with _sim_context(mode=args.mode, settings_path=args.settings):
+        client = _get_airsim_client()
         client.enableApiControl(True)
         client.armDisarm(True)
 

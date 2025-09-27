@@ -4,29 +4,49 @@ telemetry:
     gpu_command: nvidia-smi
 
 airsim_instances:
-    - name: sim_headless_0
-      mode: headless
+    - name: sim_gui_0
+      mode: gui
       settings: settings.json
       # Optional platform-specific executable overrides. When omitted, the script
       # falls back to utils.airsim_runner platform defaults.
       command_windows:
           - G:\Projects\HRL_SelfDrivingCar\AirSimNH\WindowsNoEditor\AirSimNH.exe
           - -settings
-          - settings.json
-          - -RenderOffScreen
+          - "{settings_path}"
+        #   - -RenderOffScreen
       command_linux:
           - bash
           - ./AirSimNH.sh
           - -settings
-          - settings.json
-          - -RenderOffScreen
+          - "{settings_path}"
+        #   - -RenderOffScreen
+          - -windowed
+      max_attempts: 3
+      backoff_seconds: 2.0
+      timeout: 45
+    - name: sim_gui_1
+      mode: gui
+      settings: settings.json
+      # Optional platform-specific executable overrides. When omitted, the script
+      # falls back to utils.airsim_runner platform defaults.
+      command_windows:
+          - G:\Projects\HRL_SelfDrivingCar\AirSimNH\WindowsNoEditor\AirSimNH.exe
+          - -settings
+          - "{settings_path}"
+        #   - -RenderOffScreen
+      command_linux:
+          - bash
+          - ./AirSimNH.sh
+          - -settings
+          - "{settings_path}"
+        #   - -RenderOffScreen
           - -windowed
       max_attempts: 3
       backoff_seconds: 2.0
       timeout: 45
 
 training_jobs:
-    - name: trainer_gpu0
+    - name: trainer_gpu0_instance0
       command:
           - uv
           - run
@@ -37,10 +57,12 @@ training_jobs:
           - configs/experiments/training.yaml
           - --episodes
           - "10"
+          - --mode
+          - gui
       env:
           CUDA_VISIBLE_DEVICES: "0"
 
-    - name: trainer_gpu1
+    - name: trainer_gpu0_instance1
       command:
           - uv
           - run
@@ -51,5 +73,7 @@ training_jobs:
           - configs/experiments/training.yaml
           - --episodes
           - "10"
+          - --mode
+          - gui
       env:
           CUDA_VISIBLE_DEVICES: "0"

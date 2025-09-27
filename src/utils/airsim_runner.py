@@ -177,11 +177,16 @@ def _headless_flags() -> list[str]:
 
 
 def _wait_for_start(process: Any, timeout: float) -> None:
+    # A simple time-based wait is not sufficient, as the simulator may still be
+    # initializing its RPC server even after the process is running.
+    # A better approach would be to poll the API server, but that requires
+    # knowing the port, which is configured in the settings file.
+    # For now, we'll stick with a generous sleep.
     deadline = time.time() + timeout
     while time.time() < deadline:
         if process.poll() is not None:
             raise SimulatorLaunchError("Simulator exited during startup")
-        time.sleep(0.1)
+        time.sleep(1)
     # If we exit the loop normally, assume process running
 
 
