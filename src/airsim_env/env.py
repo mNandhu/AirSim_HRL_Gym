@@ -26,7 +26,8 @@ _GOAL_THRESHOLD = 0.5
 @dataclass
 class _CommandContext:
     name: str | None = None
-    completed: bool = False
+    pending_completion: bool = False
+    completion_awarded: bool = False
 
 
 class AirSimEnv:
@@ -61,6 +62,7 @@ class AirSimEnv:
         airsim_client = getattr(self._simulator, "client", None)
         apply_seed_bundle(bundle, airsim_client=airsim_client)
         self._step_index = 0
+        self._command_context = _CommandContext()
 
         sim_state = self._simulator.reset(self._experiment)
         observation = self._build_observation(
@@ -128,18 +130,33 @@ class AirSimEnv:
     ) -> tuple[dict[str, float], float]:
         current_state = self._vehicle_state_from_telemetry(current, previous=previous)
         active_command = self._command_context.name or ""
+        command_completed = self._command_context.pending_completion
         components, total = self._reward_calculator.compute(
             current_state,
             active_command=active_command,
-            command_completed=self._command_context.completed,
+            command_completed=command_completed,
             progress_possible=progress_possible,
         )
-        # Command completion is single-use until reset
-        self._command_context.completed = False
+        # Command completion is single-use until re-armed
+        if command_completed:
+            self._command_context.completion_awarded = True
+        self._command_context.pending_completion = False
         return components, total
 
     def set_command(self, name: str | None, completed: bool = False) -> None:
-        self._command_context = _CommandContext(name=name, completed=completed)
+        ctx = self._command_context
+        if name != ctx.name:
+            ctx = _CommandContext(name=name)
+        else:
+            if not completed:
+                ctx.pending_completion = False
+                if ctx.completion_awarded:
+                    ctx.completion_awarded = False
+
+        if completed and not ctx.completion_awarded:
+            ctx.pending_completion = True
+
+        self._command_context = ctx
 
     def close(self) -> None:
         terminate = getattr(self._simulator, "close", None)
