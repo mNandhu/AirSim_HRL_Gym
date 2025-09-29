@@ -4,8 +4,8 @@ telemetry:
     gpu_command: nvidia-smi
 
 airsim_instances:
-    - name: sim_gui_0
-      mode: gui
+    - name: sim_headless_0
+      mode: headless
       settings: settings.json
       # Optional platform-specific executable overrides. When omitted, the script
       # falls back to utils.airsim_runner platform defaults.
@@ -13,19 +13,19 @@ airsim_instances:
           - G:\Projects\HRL_SelfDrivingCar\AirSimNH\WindowsNoEditor\AirSimNH.exe
           - -settings
           - "{settings_path}"
-        #   - -RenderOffScreen
+          - -RenderOffScreen
       command_linux:
           - bash
           - ./AirSimNH.sh
           - -settings
           - "{settings_path}"
-        #   - -RenderOffScreen
+          - -RenderOffScreen
           - -windowed
       max_attempts: 3
       backoff_seconds: 2.0
       timeout: 45
-    - name: sim_gui_1
-      mode: gui
+    - name: sim_headless_1
+      mode: headless
       settings: settings.json
       # Optional platform-specific executable overrides. When omitted, the script
       # falls back to utils.airsim_runner platform defaults.
@@ -33,13 +33,13 @@ airsim_instances:
           - G:\Projects\HRL_SelfDrivingCar\AirSimNH\WindowsNoEditor\AirSimNH.exe
           - -settings
           - "{settings_path}"
-        #   - -RenderOffScreen
+          - -RenderOffScreen
       command_linux:
           - bash
           - ./AirSimNH.sh
           - -settings
           - "{settings_path}"
-        #   - -RenderOffScreen
+          - -RenderOffScreen
           - -windowed
       max_attempts: 3
       backoff_seconds: 2.0
@@ -56,9 +56,11 @@ training_jobs:
           - --config
           - configs/experiments/training.yaml
           - --episodes
-          - "10"
+          - "2"
           - --mode
-          - gui
+          - headless
+          - --max-steps
+          - "300"
       env:
           CUDA_VISIBLE_DEVICES: "0"
 
@@ -72,8 +74,10 @@ training_jobs:
           - --config
           - configs/experiments/training.yaml
           - --episodes
-          - "10"
+          - "2"
           - --mode
-          - gui
+          - headless
+          - --max-steps
+          - "300"
       env:
           CUDA_VISIBLE_DEVICES: "0"

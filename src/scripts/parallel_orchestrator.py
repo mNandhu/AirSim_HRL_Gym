@@ -110,6 +110,7 @@ def launch_training_jobs(
     definitions: Iterable[dict[str, Any]],
     *,
     base_port: int,
+    run_dir: Path | None = None,
 ) -> dict[str, subprocess.Popen[Any]]:
     jobs: dict[str, subprocess.Popen[Any]] = {}
     for i, definition in enumerate(definitions):
@@ -125,6 +126,9 @@ def launch_training_jobs(
         assigned_port = base_port + i
         env["AIRSIM_PORT"] = str(assigned_port)
         env["AIRSIM_HOST"] = "127.0.0.1"
+        # Provide the actual settings path this trainer should reference (if available)
+        if run_dir is not None:
+            env["AIRSIM_SETTINGS_PATH"] = str(run_dir / f"settings_{i}.json")
 
         # Mapping print for clarity
         gpu_info = env_overrides.get("CUDA_VISIBLE_DEVICES")
@@ -256,7 +260,7 @@ def main(argv: list[str] | None = None) -> int:
     sessions = launch_airsim_instances(
         airsim_defs, run_dir=run_paths.run_dir, base_port=args.base_port
     )
-    jobs = launch_training_jobs(job_defs, base_port=args.base_port)
+    jobs = launch_training_jobs(job_defs, base_port=args.base_port, run_dir=run_paths.run_dir)
 
     stop_event = threading.Event()
     telemetry_thread = threading.Thread(
