@@ -113,9 +113,13 @@ class AirSimEnv:
         self._last_observation = observation
 
         # Log step completion to the console with a timestamp (HH:MM:SS.mmm)
+        # Only when explicitly enabled to prevent console I/O from throttling the loop.
         try:
-            ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-            print(f"[{ts}] step {self._step_index} completed")
+            import os
+
+            if os.environ.get("HRL_STEP_LOG", "").lower() in {"1", "true", "yes", "on"}:
+                ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+                print(f"[{ts}] step {self._step_index} completed")
         except Exception:
             # Never let logging disrupt environment stepping
             pass

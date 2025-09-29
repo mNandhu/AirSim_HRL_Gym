@@ -20,6 +20,7 @@ from hrl_agent.coordination import CommandCoordinator
 from hrl_agent.manager.dqn_manager import CommandPolicy, DQNManager
 from hrl_agent.orchestrator import HRLOrchestrator
 from hrl_agent.workers.sac_worker import SACWorker
+from perception.async_pipeline import AsyncPerceptionPipeline
 from perception.detector import ModelLoadError, YoloDetector
 from perception.pipeline import PerceptionPipeline
 from perception.segmentation import SegmentationAdapter
@@ -45,7 +46,14 @@ except ImportError as e:
 class AirSimSimulatorAdapter:
     """Real AirSim simulator adapter for training."""
 
-    def __init__(self, client: Any, *, horizon: int, control_dt: float = 0.1) -> None:
+    def __init__(
+        self,
+        client: Any,
+        *,
+        horizon: int,
+        control_dt: float = 0.1,
+        enable_rgb: bool = True,
+    ) -> None:
         self._client = client
         self._step = 0
         self._horizon = horizon
@@ -55,6 +63,7 @@ class AirSimSimulatorAdapter:
         self._previous_timestamp = None
         self._goal_pose = None
         self._accumulator_time = 0.0
+        self._enable_rgb = enable_rgb
 
     def reset(self, experiment) -> dict[str, Any]:
         self._step = 0
@@ -163,6 +172,8 @@ class AirSimSimulatorAdapter:
 
     def _get_camera_image(self):
         """Get RGB camera image from AirSim."""
+        if not self._enable_rgb:
+            return None
         try:
             responses = self._client.simGetImages(
                 [airsim.ImageRequest("0", airsim.ImageType.Scene, False, False)]
@@ -354,9 +365,19 @@ def train_mode(args) -> int:
         client = _get_airsim_client()
         client.enableApiControl(True)
         client.armDisarm(True)
-
-        simulator = AirSimSimulatorAdapter(client, horizon=experiment.horizon)
-        perception = _build_perception(client, args.camera_name, args.detector_model)
+        perception = _build_perception(
+            client,
+            args.camera_name,
+            args.detector_model,
+            async_mode=(not getattr(args, "perception_sync", False)),
+            enable_segmentation=not args.disable_segmentation,
+        )
+        # If perception is configured to not use detections (dummy), skip RGB grabs for speed
+        detector_obj = getattr(perception, "_detector", None)
+        enable_rgb = detector_obj is not None and detector_obj.__class__.__name__ != "DummyDetector"
+        simulator = AirSimSimulatorAdapter(
+            client, horizon=experiment.horizon, enable_rgb=enable_rgb
+        )
         env = AirSimEnv(experiment, simulator=simulator, perception=perception)
 
         sb3_log_root = run_paths.logs_dir / "sb3"
@@ -521,9 +542,18 @@ def inference_mode(args) -> int:
         client = _get_airsim_client()
         client.enableApiControl(True)
         client.armDisarm(True)
-
-        simulator = AirSimSimulatorAdapter(client, horizon=experiment.horizon)
-        perception = _build_perception(client, args.camera_name, args.detector_model)
+        perception = _build_perception(
+            client,
+            args.camera_name,
+            args.detector_model,
+            async_mode=(not getattr(args, "perception_sync", False)),
+            enable_segmentation=not args.disable_segmentation,
+        )
+        detector_obj = getattr(perception, "_detector", None)
+        enable_rgb = detector_obj is not None and detector_obj.__class__.__name__ != "DummyDetector"
+        simulator = AirSimSimulatorAdapter(
+            client, horizon=experiment.horizon, enable_rgb=enable_rgb
+        )
         env = AirSimEnv(experiment, simulator=simulator, perception=perception)
 
         # Load trained models
@@ -583,8 +613,16 @@ def inference_mode(args) -> int:
     return 0
 
 
-def _build_perception(client, camera_name: str, detector_model: str) -> PerceptionPipeline:
+def _build_perception(
+    client,
+    camera_name: str,
+    detector_model: str,
+    *,
+    async_mode: bool = False,
+    enable_segmentation: bool = True,
+):
     segmentation = SegmentationAdapter(client, camera_name=camera_name)
+    use_dummy = False
     try:
         detector = YoloDetector(model_name=detector_model)
     except ModelLoadError as exc:
@@ -596,7 +634,21 @@ def _build_perception(client, camera_name: str, detector_model: str) -> Percepti
                 return []
 
         detector = DummyDetector()
-    return PerceptionPipeline(segmentation=segmentation, detector=cast(YoloDetector, detector))
+        use_dummy = True
+
+    # If detector is dummy/none/off, don't waste time on segmentation by default
+    seg_enabled = enable_segmentation and not use_dummy
+    if async_mode and not use_dummy:
+        return AsyncPerceptionPipeline(
+            segmentation=segmentation,
+            detector=cast(YoloDetector, detector),
+            enable_segmentation=seg_enabled,
+        )
+    return PerceptionPipeline(
+        segmentation=segmentation,
+        detector=cast(YoloDetector, detector),
+        enable_segmentation=seg_enabled,
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -620,6 +672,16 @@ def parse_args() -> argparse.Namespace:
     train_parser.add_argument("--detector-model", default="yolov8n")
     train_parser.add_argument("--camera-name", default="0")
     train_parser.add_argument(
+        "--disable-segmentation",
+        action="store_true",
+        help="Skip segmentation capture to reduce RPC overhead",
+    )
+    train_parser.add_argument(
+        "--perception-sync",
+        action="store_true",
+        help="Force synchronous perception (default is async)",
+    )
+    train_parser.add_argument(
         "--metrics-update-interval",
         type=int,
         default=5,
@@ -642,6 +704,16 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=5,
         help="Update metrics plots every N steps (0 or negative to disable)",
+    )
+    eval_parser.add_argument(
+        "--disable-segmentation",
+        action="store_true",
+        help="Skip segmentation capture to reduce RPC overhead",
+    )
+    eval_parser.add_argument(
+        "--perception-sync",
+        action="store_true",
+        help="Force synchronous perception (default is async)",
     )
 
     return parser.parse_args()

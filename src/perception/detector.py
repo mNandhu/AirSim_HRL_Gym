@@ -55,13 +55,13 @@ class YoloDetector:
         if image is None:
             return []
         try:
-            predictions = self._model(image, verbose=False)
+            predictions = self._model(image, verbose=False, device="cuda:0")
         except TypeError as exc:
             message = str(exc).lower()
             if "unexpected keyword" in message and "verbose" in message:
-                predictions = self._model(image)
+                predictions = self._model(image, device="cuda:0")
             elif "got an unexpected keyword argument" in message and "verbose" in message:
-                predictions = self._model(image)
+                predictions = self._model(image, device="cuda:0")
             else:
                 raise
         if not predictions:

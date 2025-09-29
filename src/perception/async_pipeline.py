@@ -31,11 +31,13 @@ class AsyncPerceptionPipeline:
         *,
         segmentation: SegmentationAdapter,
         detector: YoloDetector,
+        enable_segmentation: bool = True,
         max_queue_size: int = 2,
         poll_interval: float = 0.01,
     ) -> None:
         self._segmentation = segmentation
         self._detector = detector
+        self._enable_segmentation = enable_segmentation
         self._queue: Queue[np.ndarray] = Queue(maxsize=max_queue_size)
         self._latest_detections: list[dict[str, Any]] = []
         self._latest_lock = threading.Lock()
@@ -46,7 +48,12 @@ class AsyncPerceptionPipeline:
         self._worker.start()
 
     def build_observation_inputs(self, raw_rgb: Any) -> dict[str, Any]:
-        mask = self._segmentation.capture_segmentation()
+        mask = None
+        if self._enable_segmentation and self._segmentation is not None:
+            try:
+                mask = self._segmentation.capture_segmentation()
+            except Exception:
+                mask = None
         frame = PerceptionPipeline._to_numpy_image(raw_rgb)
         if frame is not None:
             self._submit_frame(frame)

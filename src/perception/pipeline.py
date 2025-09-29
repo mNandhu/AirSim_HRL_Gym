@@ -13,12 +13,25 @@ __all__ = ["PerceptionPipeline"]
 
 
 class PerceptionPipeline:
-    def __init__(self, *, segmentation: SegmentationAdapter, detector: YoloDetector) -> None:
+    def __init__(
+        self,
+        *,
+        segmentation: SegmentationAdapter,
+        detector: YoloDetector,
+        enable_segmentation: bool = True,
+    ) -> None:
         self._segmentation = segmentation
         self._detector = detector
+        self._enable_segmentation = enable_segmentation
 
     def build_observation_inputs(self, raw_rgb: Any) -> dict[str, Any]:
-        mask = self._segmentation.capture_segmentation()
+        mask = None
+        if self._enable_segmentation and self._segmentation is not None:
+            try:
+                mask = self._segmentation.capture_segmentation()
+            except Exception:
+                # If segmentation fails, proceed without it to avoid blocking the control loop
+                mask = None
         rgb_array = self._to_numpy_image(raw_rgb)
         detections = self._detector.run_detection(rgb_array) if rgb_array is not None else []
         return {

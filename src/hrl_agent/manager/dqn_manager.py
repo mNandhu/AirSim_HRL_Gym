@@ -185,6 +185,7 @@ class DQNManager:
             exploration_initial_eps=self._exploration_initial_eps,
             exploration_final_eps=self._exploration_final_eps,
             verbose=0,
+            device="cuda"
         )
         self._configure_logger(log_dir)
         self._steps = 0
