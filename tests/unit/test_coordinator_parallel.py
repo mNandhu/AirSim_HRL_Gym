@@ -145,7 +145,8 @@ def test_act_batch_tracks_per_environment_state():
 
     observations["env_a"] = make_observation(4.0)
     assert coordinator.command_completed_for_env("env_a", observations["env_a"]) is True
-    assert coordinator.command_completed_for_env("env_b", observations["env_b"]) is True
+    # With STOP hysteresis, a single sample below threshold is not enough
+    assert coordinator.command_completed_for_env("env_b", observations["env_b"]) is False
 
 
 def test_observe_transition_for_env_routes_experience():

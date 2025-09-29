@@ -193,6 +193,11 @@ def _create_coordinator(
     model_dir: str = "models",
     log_root: Path | str | None = None,
     log_formats: Sequence[str] | None = None,
+    # manager exploration controls
+    exploration_fraction: float = 0.1,
+    exploration_initial_eps: float = 1.0,
+    exploration_final_eps: float = 0.05,
+    expected_total_timesteps: int | None = None,
 ) -> CommandCoordinator:
     """Create coordinator with optional pre-trained models."""
     commands = [
@@ -211,6 +216,10 @@ def _create_coordinator(
         policy,
         log_formats=log_formats,
         default_log_dir=manager_log_dir,
+        exploration_fraction=exploration_fraction,
+        exploration_initial_eps=exploration_initial_eps,
+        exploration_final_eps=exploration_final_eps,
+        total_timesteps=expected_total_timesteps,
     )
 
     # Load or create DQN manager model
@@ -309,6 +318,9 @@ def train_mode(args) -> int:
             "learning_rate": 3e-4,
             "buffer_size": 50000,
             "learning_starts": 128,
+            "exploration_fraction": 0.8,
+            "exploration_initial_eps": 1.0,
+            "exploration_final_eps": 0.1,
         },
         "workers_sac": {
             "learning_rate": 3e-4,
@@ -348,10 +360,17 @@ def train_mode(args) -> int:
         env = AirSimEnv(experiment, simulator=simulator, perception=perception)
 
         sb3_log_root = run_paths.logs_dir / "sb3"
+        expected_total_timesteps = (
+            args.episodes * args.max_steps if args.max_steps and args.episodes else None
+        )
         coordinator = _create_coordinator(
             load_models=args.resume,
             model_dir=args.models,
             log_root=sb3_log_root,
+            exploration_fraction=0.8,
+            exploration_initial_eps=1.0,
+            exploration_final_eps=0.1,
+            expected_total_timesteps=expected_total_timesteps,
         )
 
         # Hook learners to log first learning step

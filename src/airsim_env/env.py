@@ -154,14 +154,14 @@ class AirSimEnv:
 
     def set_command(self, name: str | None, completed: bool = False) -> None:
         ctx = self._command_context
+        # Re-arm only when the command changes. For the same command instance,
+        # do not clear completion_awarded; this ensures at most one award until
+        # a different command is issued.
         if name != ctx.name:
+            # New command issued: reset completion state (re-armed)
             ctx = _CommandContext(name=name)
-        else:
-            if not completed:
-                ctx.pending_completion = False
-                if ctx.completion_awarded:
-                    ctx.completion_awarded = False
 
+        # Award can only be armed once per command issuance.
         if completed and not ctx.completion_awarded:
             ctx.pending_completion = True
 

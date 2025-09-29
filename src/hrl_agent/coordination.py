@@ -26,6 +26,9 @@ class CoordinatorState:
     worker_features: np.ndarray | None = None
     command_start_distance: float | None = None
     command_start_heading: float | None = None
+    # Completion management
+    completion_awarded: bool = False
+    stop_below_threshold_steps: int = 0
 
 
 class CommandCoordinator:
@@ -82,14 +85,33 @@ class CommandCoordinator:
         start_distance = telemetry.get("distance_to_goal")
         heading = telemetry.get("heading_deg")
 
-        state = CoordinatorState(
-            command=command,
-            last_action=action,
-            manager_features=command_input,
-            worker_features=worker_input,
-            command_start_distance=float(start_distance) if start_distance is not None else None,
-            command_start_heading=float(heading) if heading is not None else None,
-        )
+        prev = self._per_env_state.get(env_id)
+        # If command changes, re-arm completion and establish new baselines
+        if prev is None or prev.command != command:
+            state = CoordinatorState(
+                command=command,
+                last_action=action,
+                manager_features=command_input,
+                worker_features=worker_input,
+                command_start_distance=float(start_distance)
+                if start_distance is not None
+                else None,
+                command_start_heading=float(heading) if heading is not None else None,
+                completion_awarded=False,
+                stop_below_threshold_steps=0,
+            )
+        else:
+            # Preserve baselines and completion state across steps for same command
+            state = CoordinatorState(
+                command=command,
+                last_action=action,
+                manager_features=command_input,
+                worker_features=worker_input,
+                command_start_distance=prev.command_start_distance,
+                command_start_heading=prev.command_start_heading,
+                completion_awarded=prev.completion_awarded,
+                stop_below_threshold_steps=prev.stop_below_threshold_steps,
+            )
         self._per_env_state[env_id] = state
         if env_id == DEFAULT_ENVIRONMENT_ID:
             self._state = state
@@ -135,19 +157,32 @@ class CommandCoordinator:
         start_distance = state.command_start_distance
         start_heading = state.command_start_heading
 
+        # Hysteresis for STOP: require K consecutive steps below threshold
         completed = False
         if command == "STOP":
-            completed = speed < 0.2
+            threshold = 0.2
+            hysteresis_steps = 5
+            if speed < threshold:
+                state.stop_below_threshold_steps += 1
+            else:
+                state.stop_below_threshold_steps = 0
+            completed = state.stop_below_threshold_steps >= hysteresis_steps
         elif command == "FOLLOW_LANE":
-            if start_distance is not None:
+            # Completion relative to the starting distance of this command instance
+            if start_distance is not None and distance is not None:
                 completed = (start_distance - distance) >= 5.0
         elif command == "TURN_LEFT_AT_INTERSECTION":
-            if start_heading is not None:
+            if start_heading is not None and heading is not None:
                 completed = self._signed_heading_delta(start_heading, heading) >= 70.0
         elif command == "TURN_RIGHT_AT_INTERSECTION":
-            if start_heading is not None:
+            if start_heading is not None and heading is not None:
                 completed = self._signed_heading_delta(start_heading, heading) <= -70.0
 
+        # Enforce single completion per command issuance
+        if completed and state.completion_awarded:
+            return False
+        if completed:
+            state.completion_awarded = True
         return completed
 
     def observe_transition(

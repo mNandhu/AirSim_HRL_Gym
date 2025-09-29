@@ -53,6 +53,12 @@ class DQNManager:
         learning_rate: float = 3e-4,
         buffer_size: int = 50_000,
         learning_starts: int = 128,
+        # Exploration settings (mirrors stable-baselines3.DQN)
+        exploration_fraction: float = 0.1,
+        exploration_initial_eps: float = 1.0,
+        exploration_final_eps: float = 0.05,
+        # Estimated total manager timesteps across training to drive epsilon schedule
+        total_timesteps: int | None = None,
         log_formats: Sequence[str] | None = None,
         default_log_dir: Path | str | None = None,
     ) -> None:
@@ -61,6 +67,12 @@ class DQNManager:
         self._buffer_size = buffer_size
         self._learning_rate = learning_rate
         self._learning_starts = learning_starts
+        self._exploration_fraction = float(exploration_fraction)
+        self._exploration_initial_eps = float(exploration_initial_eps)
+        self._exploration_final_eps = float(exploration_final_eps)
+        self._expected_total_timesteps = (
+            int(total_timesteps) if total_timesteps is not None else None
+        )
         self._steps = 0
         self.on_learning_start: Optional[Callable[[dict], None]] = None
         self._learner_started_logged = False
@@ -94,7 +106,23 @@ class DQNManager:
         if self._model is None:
             # Default to first command if no model is attached yet.
             return self._policy.command_from_index(0)
-        action, _ = self._model.predict(observation, deterministic=deterministic)
+        # Implement epsilon-greedy on top of SB3 policy when not deterministic.
+        if not deterministic:
+            try:
+                eps = float(getattr(self._model, "exploration_rate", self._exploration_final_eps))
+            except Exception:
+                eps = self._exploration_final_eps
+            # Clip for safety
+            eps = float(max(0.0, min(1.0, eps)))
+            if np.random.rand() < eps and self._action_space is not None:
+                # Explore uniformly among commands
+                try:
+                    action_idx = int(self._action_space.sample())
+                    return self._policy.command_from_index(action_idx)
+                except Exception:
+                    pass
+        # Default to greedy action from the model
+        action, _ = self._model.predict(observation, deterministic=True)
         return self._policy.command_from_index(int(action))
 
     def attach_model(self, model: Any) -> None:
@@ -153,6 +181,9 @@ class DQNManager:
             learning_starts=self._learning_starts,
             train_freq=1,
             gradient_steps=1,
+            exploration_fraction=self._exploration_fraction,
+            exploration_initial_eps=self._exploration_initial_eps,
+            exploration_final_eps=self._exploration_final_eps,
             verbose=0,
         )
         self._configure_logger(log_dir)
@@ -192,6 +223,33 @@ class DQNManager:
 
         replay_buffer.add(obs, next_obs, action, reward_arr, done_arr, infos)
         self._steps += 1
+
+        # Update epsilon schedule manually to mirror SB3 behavior since we do custom rollouts.
+        # We use a simple linear schedule from initial->final over the first
+        # (exploration_fraction * expected_total_timesteps) steps.
+        try:
+            if (
+                self._model is not None
+                and self._expected_total_timesteps
+                and self._expected_total_timesteps > 0
+            ):
+                expl_phase_steps = max(
+                    1, int(self._exploration_fraction * self._expected_total_timesteps)
+                )
+                progress = min(1.0, self._steps / float(expl_phase_steps))
+                new_eps = (
+                    1.0 - progress
+                ) * self._exploration_initial_eps + progress * self._exploration_final_eps
+                # Clip epsilon in [0, 1]
+                new_eps = max(0.0, min(1.0, float(new_eps)))
+                # Apply to model so select_command can read it
+                try:
+                    self._model.exploration_rate = new_eps  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+        except Exception:
+            # Best-effort; exploration rate fallback handled in select_command
+            pass
 
         # Fire one-time learning-start event at the first training step
         threshold = getattr(self._model, "learning_starts", self._learning_starts)
@@ -234,6 +292,13 @@ class DQNManager:
 
                     # Log command selection metrics for DQN
                     self._model.logger.record("train/command_selection_step", self._steps)
+                    # Log current exploration rate if available
+                    try:
+                        eps = float(getattr(self._model, "exploration_rate", np.nan))
+                        if not np.isnan(eps):
+                            self._model.logger.record("train/exploration_rate", eps)
+                    except Exception:
+                        pass
 
                     # Dump the logs to CSV file
                     self._model.logger.dump(step=self._steps)

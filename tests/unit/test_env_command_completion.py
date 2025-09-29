@@ -92,17 +92,18 @@ def test_completion_awarded_once_until_rearmed():
     env.set_command("STOP", completed=True)
     env.step({})
 
-    # Once completion signal drops, the bonus can trigger again
+    # Completion is only re-armed when the command changes; staying on STOP
+    # should not re-arm even if the completion flag toggles.
     env.set_command("STOP", completed=False)
     env.step({})
     env.set_command("STOP", completed=True)
     env.step({})
 
     assert reward_calc.command_completed_flags == [
+        False,  # initial step, no completion
+        True,  # first completion after issuing STOP
         False,
-        True,
         False,
         False,
-        False,
-        True,
+        False,  # not re-armed without command switch
     ]
