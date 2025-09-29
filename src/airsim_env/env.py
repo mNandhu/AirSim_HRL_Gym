@@ -112,6 +112,14 @@ class AirSimEnv:
         self._step_index += 1
         self._last_observation = observation
 
+        # Log step completion to the console with a timestamp (HH:MM:SS.mmm)
+        try:
+            ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+            print(f"[{ts}] step {self._step_index} completed")
+        except Exception:
+            # Never let logging disrupt environment stepping
+            pass
+
         info = {
             "config_hash": self._config_hash,
             "seed_bundle": self._seed_bundle.model_dump()

@@ -374,8 +374,15 @@ def train_mode(args) -> int:
         orchestrator = HRLOrchestrator(env, coordinator)
 
         # Initialize metrics tracker
-        metrics_tracker = MetricsTracker(run_paths.run_dir, update_interval=5)
-        print("📊 Initialized metrics tracker - graphs will update every 5 steps")
+        metrics_tracker = MetricsTracker(
+            run_paths.run_dir, update_interval=args.metrics_update_interval
+        )
+        if args.metrics_update_interval and args.metrics_update_interval > 0:
+            print(
+                f"📊 Initialized metrics tracker - graphs will update every {args.metrics_update_interval} steps"
+            )
+        else:
+            print("📊 Metrics tracker initialized - periodic plotting disabled")
 
         # Training loop
         training_stats = []
@@ -593,6 +600,12 @@ def parse_args() -> argparse.Namespace:
     train_parser.add_argument("--output", default="artifacts", help="Artifact directory")
     train_parser.add_argument("--detector-model", default="yolov8n")
     train_parser.add_argument("--camera-name", default="0")
+    train_parser.add_argument(
+        "--metrics-update-interval",
+        type=int,
+        default=5,
+        help="Update metrics plots every N steps (0 or negative to disable)",
+    )
 
     # Inference mode
     eval_parser = subparsers.add_parser("eval", help="Evaluate trained models")
@@ -605,6 +618,12 @@ def parse_args() -> argparse.Namespace:
     eval_parser.add_argument("--detector-model", default="yolov8n")
     eval_parser.add_argument("--camera-name", default="0")
     eval_parser.add_argument("--output", default="artifacts", help="Artifact directory")
+    eval_parser.add_argument(
+        "--metrics-update-interval",
+        type=int,
+        default=5,
+        help="Update metrics plots every N steps (0 or negative to disable)",
+    )
 
     return parser.parse_args()
 

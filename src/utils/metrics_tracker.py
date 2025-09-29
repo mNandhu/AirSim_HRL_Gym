@@ -3,14 +3,25 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import matplotlib.pyplot as plt
+import matplotlib
 import numpy as np
+
+# Force a non-interactive backend so plotting from background threads is safe
+try:
+    matplotlib.use("Agg", force=True)
+except Exception:
+    # If backend cannot be changed (already set), continue with existing backend
+    print("Unable to set matplotlib backend to 'Agg'; continuing with existing backend.")
+    pass
+
+import matplotlib.pyplot as plt
 
 # Set plotting style
 try:
@@ -72,7 +83,7 @@ class EpisodeMetrics:
 class MetricsTracker:
     """Tracks and visualizes training metrics in real-time."""
 
-    def __init__(self, artifacts_dir: Path, update_interval: int = 10):
+    def __init__(self, artifacts_dir: Path, update_interval: int = 10, async_plots: bool = True):
         """
         Initialize the metrics tracker.
 
@@ -85,6 +96,8 @@ class MetricsTracker:
         self.metrics_dir.mkdir(parents=True, exist_ok=True)
 
         self.update_interval = update_interval
+        self._async_plots = async_plots
+        self._plot_thread: Optional[threading.Thread] = None
         self.step_counter = 0
 
         # Data storage
@@ -158,8 +171,27 @@ class MetricsTracker:
 
         # Update graphs periodically
         self.step_counter += 1
-        if self.step_counter % self.update_interval == 0:
-            self._update_graphs()
+        if self.update_interval and self.update_interval > 0:
+            if self.step_counter % self.update_interval == 0:
+                if self._async_plots:
+                    self._schedule_async_plot()
+                else:
+                    self._update_graphs()
+
+    def _schedule_async_plot(self) -> None:
+        """Schedule a non-blocking plot update if one isn't already running."""
+        # If a previous plot is still running, skip scheduling a new one
+        if self._plot_thread is not None and self._plot_thread.is_alive():
+            return
+
+        def _worker() -> None:
+            try:
+                self._update_graphs()
+            except Exception as e:  # noqa: BLE001
+                print(f"⚠️  Warning: Failed to update graphs (async): {e}")
+
+        self._plot_thread = threading.Thread(target=_worker, name="metrics-plotter", daemon=True)
+        self._plot_thread.start()
 
     def finish_episode(self, completed_successfully: bool = False) -> None:
         """Finish the current episode."""
@@ -167,7 +199,8 @@ class MetricsTracker:
             return
 
         self._finish_episode(completed_successfully)
-        self._update_graphs()  # Force update after episode completion
+        # Force a synchronous update after episode completion so episode artifacts are current
+        self._update_graphs()
         self._save_metrics()
 
         # Reset state so repeated calls do not duplicate episode metrics.
