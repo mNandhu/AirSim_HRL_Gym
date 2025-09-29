@@ -43,6 +43,7 @@ class StepMetrics:
     collision_penalty: float = 0.0
     completion_bonus: float = 0.0
     idle_penalty: float = 0.0
+    time_penalty: float = 0.0
 
 
 @dataclass
@@ -146,6 +147,7 @@ class MetricsTracker:
             collision_penalty=reward_components.get("collision_penalty", 0.0),
             completion_bonus=reward_components.get("completion_bonus", 0.0),
             idle_penalty=reward_components.get("idle_penalty", 0.0),
+            time_penalty=reward_components.get("time_penalty", 0.0),
         )
 
         self.current_episode_steps.append(step_metrics)
@@ -400,6 +402,7 @@ class MetricsTracker:
         collision_penalties = [s.collision_penalty for s in self.current_episode_steps]
         completion_bonuses = [s.completion_bonus for s in self.current_episode_steps]
         idle_penalties = [s.idle_penalty for s in self.current_episode_steps]
+        time_penalties = [s.time_penalty for s in self.current_episode_steps]
 
         # Speed over time
         ax1.plot(steps, speeds, "purple", linewidth=2, label="Speed")
@@ -462,6 +465,21 @@ class MetricsTracker:
             steps, completion_base, idle_base, alpha=0.7, label="Idle Penalty", color="gray"
         )
 
+        time_base = [
+            cs + cp + cb + ip + tp
+            for cs, cp, cb, ip, tp in zip(
+                command_shaping,
+                collision_penalties,
+                completion_bonuses,
+                idle_penalties,
+                time_penalties,
+                strict=False,
+            )
+        ]
+        ax3.fill_between(
+            steps, idle_base, time_base, alpha=0.7, label="Time Penalty", color="black"
+        )
+
         ax3.set_xlabel("Step")
         ax3.set_ylabel("Reward Component")
         ax3.set_title("Reward Component Breakdown")
@@ -520,6 +538,7 @@ class MetricsTracker:
                                 "collision_penalty": step.collision_penalty,
                                 "completion_bonus": step.completion_bonus,
                                 "idle_penalty": step.idle_penalty,
+                                "time_penalty": step.time_penalty,
                             },
                         }
                     )
