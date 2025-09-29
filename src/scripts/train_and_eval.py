@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import os
+import shutil
 import time
 from contextlib import nullcontext
 from pathlib import Path
@@ -276,6 +278,66 @@ def train_mode(args) -> int:
     model_dir = Path(args.models)
     model_dir.mkdir(exist_ok=True, parents=True)
 
+    # Resolve settings path (prefer the orchestrator-provided path if present)
+    settings_src = os.environ.get("AIRSIM_SETTINGS_PATH", args.settings)
+
+    # Best-effort parse for ClockSpeed to include in summary
+    clock_speed_hint = None
+    try:
+        with open(settings_src, "r", encoding="utf-8") as _sf:
+            _settings_data = json.load(_sf)
+            clock_speed_hint = _settings_data.get("ClockSpeed")
+    except Exception:
+        pass
+
+    # Emit a run-level hyperparameter summary early
+    yolo_model = args.detector_model
+    yolo_backend = "dummy" if yolo_model.lower() in {"dummy", "none", "off"} else yolo_model
+    hp_summary = {
+        "experiment": {
+            "scene": experiment.scene,
+            "vehicle": experiment.vehicle,
+            "horizon": experiment.horizon,
+        },
+        "airsim": {
+            "host": os.environ.get("AIRSIM_HOST", "127.0.0.1"),
+            "port": int(os.environ.get("AIRSIM_PORT", 41451)),
+            "settings_path": settings_src,
+            "clock_speed_hint": clock_speed_hint,
+        },
+        "manager_dqn": {
+            "learning_rate": 3e-4,
+            "buffer_size": 50000,
+            "learning_starts": 128,
+        },
+        "workers_sac": {
+            "learning_rate": 3e-4,
+            "buffer_size": 100000,
+            "learning_starts": 256,
+            "batch_size": 64,
+            "gamma": 0.99,
+            "tau": 0.02,
+        },
+        "perception": {
+            "yolo_model": yolo_backend,
+        },
+        "milestones": {
+            "dqn_learning_starts": 128,
+            "sac_learning_starts": 256,
+        },
+    }
+    artifact_manager.write_json("hparams.json", hp_summary)
+
+    # Save a copy of the settings file for reproducibility
+    try:
+        src_path = Path(settings_src)
+        if src_path.exists():
+            dst_path = run_paths.run_dir / "settings_used.json"
+            shutil.copy2(src_path, dst_path)
+    except Exception:
+        # Non-fatal: continue even if copy fails
+        pass
+
     with _sim_context(mode=args.mode, settings_path=args.settings):
         client = _get_airsim_client()
         client.enableApiControl(True)
@@ -291,6 +353,24 @@ def train_mode(args) -> int:
             model_dir=args.models,
             log_root=sb3_log_root,
         )
+
+        # Hook learners to log first learning step
+        def _log_learning_start(evt: dict) -> None:
+            try:
+                artifact_manager.append_jsonl("training_log.jsonl", {"milestone": evt})
+            except Exception:
+                pass
+
+        if hasattr(coordinator._manager, "_model"):
+            try:
+                coordinator._manager.on_learning_start = _log_learning_start  # type: ignore[attr-defined]
+            except Exception:
+                pass
+        for _cmd, _worker in coordinator._workers.items():
+            try:
+                _worker.on_learning_start = _log_learning_start  # type: ignore[attr-defined]
+            except Exception:
+                pass
         orchestrator = HRLOrchestrator(env, coordinator)
 
         # Initialize metrics tracker

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Callable, Optional, Sequence
 
 import numpy as np
 
@@ -46,6 +47,8 @@ class SACWorker:
         self._buffer_size = buffer_size
         self._learning_starts = learning_starts
         self._steps = 0
+        self.on_learning_start: Optional[Callable[[dict], None]] = None
+        self._learner_started_logged = False
         self._log_formats = tuple(log_formats) if log_formats else ("stdout", "csv")
         self._default_log_dir = (
             Path(default_log_dir)
@@ -219,7 +222,25 @@ class SACWorker:
         replay_buffer.add(obs, next_obs, action_arr, reward_arr, done_arr, infos)
         self._steps += 1
 
-        if self._steps >= getattr(self._model, "learning_starts", self._learning_starts):
+        # Fire one-time learning-start event at the first training step
+        threshold = getattr(self._model, "learning_starts", self._learning_starts)
+        if not self._learner_started_logged and self._steps >= threshold:
+            self._learner_started_logged = True
+            if callable(self.on_learning_start):
+                try:
+                    self.on_learning_start(
+                        {
+                            "event": "learner_started",
+                            "algo": "sac",
+                            "step": self._steps,
+                            "learning_starts": int(threshold),
+                            "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+                        }
+                    )
+                except Exception:
+                    pass
+
+        if self._steps >= threshold:
             batch_size = getattr(self._model, "batch_size", 64)
             self._model.train(batch_size=batch_size, gradient_steps=1)
 
