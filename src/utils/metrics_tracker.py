@@ -310,7 +310,15 @@ class MetricsTracker:
         ax2.legend()
 
         plt.tight_layout()
+        # Save latest and per-episode variants for comparison across episodes
         plt.savefig(self.metrics_dir / "reward.png", dpi=100, bbox_inches="tight")
+        try:
+            if self.current_episode is not None:
+                ep_path = self.metrics_dir / f"reward_ep{self.current_episode}.png"
+                plt.savefig(ep_path, dpi=100, bbox_inches="tight")
+        except Exception:
+            # Proceed even if per-episode save fails
+            pass
         plt.close()
 
     def _plot_episode_summary(self) -> None:
@@ -413,7 +421,14 @@ class MetricsTracker:
         ax4.grid(True, alpha=0.3)
 
         plt.tight_layout()
+        # Save latest and per-episode variants
         plt.savefig(self.metrics_dir / "action_analysis.png", dpi=100, bbox_inches="tight")
+        try:
+            if self.current_episode is not None:
+                ep_path = self.metrics_dir / f"action_analysis_ep{self.current_episode}.png"
+                plt.savefig(ep_path, dpi=100, bbox_inches="tight")
+        except Exception:
+            pass
         plt.close()
 
     def _plot_performance_metrics(self) -> None:
@@ -520,7 +535,14 @@ class MetricsTracker:
         ax3.grid(True, alpha=0.3)
 
         plt.tight_layout()
+        # Save latest and per-episode variants
         plt.savefig(self.metrics_dir / "performance_metrics.png", dpi=100, bbox_inches="tight")
+        try:
+            if self.current_episode is not None:
+                ep_path = self.metrics_dir / f"performance_metrics_ep{self.current_episode}.png"
+                plt.savefig(ep_path, dpi=100, bbox_inches="tight")
+        except Exception:
+            pass
         plt.close()
 
     def _save_metrics(self) -> None:
