@@ -72,9 +72,8 @@ class EpisodeMetrics:
     completed_successfully: bool = False
 
     # Action statistics
-    avg_throttle: float = 0.0
-    avg_brake: float = 0.0
-    avg_steering_magnitude: float = 0.0
+    avg_target_speed: float = 0.0
+    avg_target_steering_magnitude: float = 0.0
 
     # Command statistics
     command_distribution: Dict[str, int] = field(default_factory=dict)
@@ -224,9 +223,14 @@ class MetricsTracker:
         total_steps = len(self.current_episode_steps)
 
         # Action statistics
-        throttles = [s.action.get("throttle", 0.0) for s in self.current_episode_steps]
-        brakes = [s.action.get("brake", 0.0) for s in self.current_episode_steps]
-        steerings = [abs(s.action.get("steering", 0.0)) for s in self.current_episode_steps]
+        target_speeds = [
+            s.action.get("target_speed", s.action.get("throttle", 0.0))
+            for s in self.current_episode_steps
+        ]
+        target_steerings = [
+            abs(s.action.get("target_steering", s.action.get("steering", 0.0)))
+            for s in self.current_episode_steps
+        ]
 
         # Command distribution
         command_dist = defaultdict(int)
@@ -249,9 +253,10 @@ class MetricsTracker:
             min_distance_to_goal=min(distances) if distances else float("inf"),
             collision_occurred=collision_occurred,
             completed_successfully=completed_successfully,
-            avg_throttle=float(np.mean(throttles)) if throttles else 0.0,
-            avg_brake=float(np.mean(brakes)) if brakes else 0.0,
-            avg_steering_magnitude=float(np.mean(steerings)) if steerings else 0.0,
+            avg_target_speed=float(np.mean(target_speeds)) if target_speeds else 0.0,
+            avg_target_steering_magnitude=float(np.mean(target_steerings))
+            if target_steerings
+            else 0.0,
             command_distribution=dict(command_dist),
         )
 
@@ -378,41 +383,45 @@ class MetricsTracker:
         )
 
         steps = [s.step for s in self.current_episode_steps]
-        throttles = [s.action.get("throttle", 0.0) for s in self.current_episode_steps]
-        brakes = [s.action.get("brake", 0.0) for s in self.current_episode_steps]
-        steerings = [s.action.get("steering", 0.0) for s in self.current_episode_steps]
+        target_speeds = [
+            s.action.get("target_speed", s.action.get("throttle", 0.0))
+            for s in self.current_episode_steps
+        ]
+        speeds = [s.speed_mps for s in self.current_episode_steps]
+        target_steerings = [
+            s.action.get("target_steering", s.action.get("steering", 0.0))
+            for s in self.current_episode_steps
+        ]
 
-        # Throttle over time
-        ax1.plot(steps, throttles, "r-", alpha=0.7, linewidth=1)
-        ax1.fill_between(steps, throttles, alpha=0.3, color="red")
-        ax1.set_ylabel("Throttle")
-        ax1.set_title("Throttle Control")
-        ax1.set_ylim(0, 1)
+        # Target speed over time
+        ax1.plot(steps, target_speeds, "r-", alpha=0.7, linewidth=1)
+        ax1.fill_between(steps, target_speeds, alpha=0.3, color="red")
+        ax1.set_ylabel("Target Speed (m/s)")
+        ax1.set_title("Speed Setpoint")
         ax1.grid(True, alpha=0.3)
 
-        # Brake over time
-        ax2.plot(steps, brakes, "b-", alpha=0.7, linewidth=1)
-        ax2.fill_between(steps, brakes, alpha=0.3, color="blue")
-        ax2.set_ylabel("Brake")
-        ax2.set_title("Brake Control")
-        ax2.set_ylim(0, 1)
+        # Actual speed over time
+        ax2.plot(steps, speeds, "b-", alpha=0.7, linewidth=1)
+        ax2.fill_between(steps, speeds, alpha=0.3, color="blue")
+        ax2.set_ylabel("Speed (m/s)")
+        ax2.set_title("Measured Speed")
         ax2.grid(True, alpha=0.3)
 
         # Steering over time
-        ax3.plot(steps, steerings, "g-", alpha=0.7, linewidth=1)
+        ax3.plot(steps, target_steerings, "g-", alpha=0.7, linewidth=1)
         ax3.axhline(y=0, color="gray", linestyle="--", alpha=0.5)
         ax3.set_xlabel("Step")
-        ax3.set_ylabel("Steering")
-        ax3.set_title("Steering Control")
+        ax3.set_ylabel("Target Steering")
+        ax3.set_title("Steering Setpoint")
         ax3.set_ylim(-1, 1)
         ax3.grid(True, alpha=0.3)
 
         # Action distribution histogram
         ax4.hist(
-            [throttles, brakes, [abs(s) for s in steerings]],
+            [target_speeds, [abs(s) for s in target_steerings]],
             bins=20,
             alpha=0.7,
-            label=["Throttle", "Brake", "Abs(Steering)"],
+            label=["Target Speed", "Abs(Target Steering)"],
         )
         ax4.set_xlabel("Action Value")
         ax4.set_ylabel("Frequency")
@@ -563,9 +572,8 @@ class MetricsTracker:
                         "min_distance_to_goal": ep.min_distance_to_goal,
                         "collision_occurred": ep.collision_occurred,
                         "completed_successfully": ep.completed_successfully,
-                        "avg_throttle": ep.avg_throttle,
-                        "avg_brake": ep.avg_brake,
-                        "avg_steering_magnitude": ep.avg_steering_magnitude,
+                        "avg_target_speed": ep.avg_target_speed,
+                        "avg_target_steering_magnitude": ep.avg_target_steering_magnitude,
                         "command_distribution": ep.command_distribution,
                     }
                 )

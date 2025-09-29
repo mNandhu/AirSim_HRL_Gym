@@ -229,9 +229,8 @@ class CommandCoordinator:
         if worker is not None and state.worker_features is not None:
             worker_action = np.array(
                 [
-                    float(last_action.get("throttle", 0.0)),
-                    float(last_action.get("brake", 0.0)),
-                    float(last_action.get("steering", 0.0)),
+                    float(last_action.get("target_speed", last_action.get("throttle", 0.0))),
+                    float(last_action.get("target_steering", last_action.get("steering", 0.0))),
                 ],
                 dtype=np.float32,
             )

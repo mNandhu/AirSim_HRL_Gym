@@ -15,6 +15,7 @@ import numpy as np
 
 from config.experiment import ExperimentDefinition, SeedBundle
 from config.seeds import apply_seed_bundle
+from utils.pid_controller import PIDController
 
 from .observation import ObservationPacket, assemble_observation
 from .reward import RewardCalculator, RewardConfig, VehicleState
@@ -40,6 +41,9 @@ class AirSimEnv:
         simulator: Any,
         perception: Any,
         reward_calculator: RewardCalculator | None = None,
+        speed_pid_config: Mapping[str, Any] | None = None,
+        steering_pid_config: Mapping[str, Any] | None = None,
+        target_speed_range: tuple[float, float] | None = None,
     ) -> None:
         self._experiment = experiment
         self._simulator = simulator
@@ -49,9 +53,38 @@ class AirSimEnv:
         self._seed_bundle = experiment.seeds
         self._config_hash = experiment.config_hash or _hash_experiment(experiment)
 
+        min_speed, max_speed = target_speed_range or (0.0, 5.0)
+        if max_speed <= min_speed:
+            raise ValueError("target_speed_range must have max > min")
+        self._target_speed_bounds = (float(min_speed), float(max_speed))
+
+        default_speed_pid = {
+            "kp": 0.5,
+            "ki": 0.1,
+            "kd": 0.05,
+            "output_limits": (-1.0, 1.0),
+        }
+        default_steering_pid = {
+            "kp": 0.5,
+            "ki": 0.1,
+            "kd": 0.05,
+            "output_limits": (-1.0, 1.0),
+        }
+
+        speed_pid_kwargs = {**default_speed_pid, **(speed_pid_config or {})}
+        steering_pid_kwargs = {**default_steering_pid, **(steering_pid_config or {})}
+
+        self.speed_pid = PIDController(**speed_pid_kwargs)
+        self.steering_pid = PIDController(**steering_pid_kwargs)
+
         self._step_index = 0
         self._last_observation: ObservationPacket | None = None
         self._command_context = _CommandContext()
+        self._last_control_action: dict[str, float] = {
+            "throttle": 0.0,
+            "brake": 0.0,
+            "steering": 0.0,
+        }
 
     @property
     def experiment(self) -> ExperimentDefinition:
@@ -63,6 +96,9 @@ class AirSimEnv:
         apply_seed_bundle(bundle, airsim_client=airsim_client)
         self._step_index = 0
         self._command_context = _CommandContext()
+        self.speed_pid.reset()
+        self.steering_pid.reset()
+        self._last_control_action = {"throttle": 0.0, "brake": 0.0, "steering": 0.0}
 
         sim_state = self._simulator.reset(self._experiment)
         observation = self._build_observation(
@@ -91,9 +127,35 @@ class AirSimEnv:
         if self._step_index >= self._experiment.horizon:
             raise RuntimeError("Environment horizon exceeded")
 
-        sim_state = self._simulator.step(action)
-        telemetry = sim_state.get("telemetry", {})
         prev_telemetry = self._last_observation.telemetry
+
+        target_speed = float(action.get("target_speed", action.get("throttle", 0.0)))
+        target_steering = float(action.get("target_steering", action.get("steering", 0.0)))
+        min_speed, max_speed = self._target_speed_bounds
+        target_speed = float(np.clip(target_speed, min_speed, max_speed))
+        target_steering = float(np.clip(target_steering, -1.0, 1.0))
+
+        current_speed = float(prev_telemetry.get("speed_mps", 0.0)) if prev_telemetry else 0.0
+        speed_control = self.speed_pid.update(target_speed, current_speed)
+
+        if speed_control >= 0.0:
+            throttle = float(np.clip(speed_control, 0.0, 1.0))
+            brake = 0.0
+        else:
+            throttle = 0.0
+            brake = float(np.clip(-speed_control, 0.0, 1.0))
+
+        steering_command = target_steering
+
+        control_action = {
+            "throttle": throttle,
+            "brake": brake,
+            "steering": steering_command,
+        }
+        self._last_control_action = control_action
+
+        sim_state = self._simulator.step(control_action)
+        telemetry = sim_state.get("telemetry", {})
         progress_possible = bool(telemetry.get("progress_possible", True))
         reward_components, reward = self.compute_reward(
             prev_telemetry, telemetry, progress_possible=progress_possible
@@ -131,6 +193,11 @@ class AirSimEnv:
             else self._seed_bundle.__dict__,
             "episode_step": self._step_index,
             "command_name": self._command_context.name,
+            "setpoint": {
+                "target_speed": target_speed,
+                "target_steering": target_steering,
+            },
+            "control_action": control_action,
         }
         return observation, reward, terminated, truncated, info
 

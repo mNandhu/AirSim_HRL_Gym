@@ -32,7 +32,7 @@ def test_dqn_manager_selects_from_model(tmp_path):
 def test_sac_worker_returns_default_action():
     worker = SACWorker()
     action = worker.act({}, deterministic=True)
-    assert set(action.keys()) == {"throttle", "brake", "steering"}
+    assert set(action.keys()) == {"target_speed", "target_steering"}
 
 
 def test_sac_worker_handles_scalar_action():
@@ -43,9 +43,8 @@ def test_sac_worker_handles_scalar_action():
     worker = SACWorker()
     worker.attach_model(ScalarModel())
     action = worker.act(np.zeros(5, dtype=np.float32), deterministic=True)
-    assert action["throttle"] == pytest.approx(0.75)
-    assert action["brake"] == 0.0
-    assert action["steering"] == 0.0
+    assert action["target_speed"] == pytest.approx(0.75)
+    assert action["target_steering"] == 0.0
 
 
 def test_sac_worker_attach_and_save(tmp_path):
@@ -54,7 +53,7 @@ def test_sac_worker_attach_and_save(tmp_path):
             self.saved = False
 
         def predict(self, observation, deterministic=True):
-            return [0.1, 0.2, -0.3], None
+            return [0.1, -0.3], None
 
         def save(self, path):
             Path(path).write_text("saved", encoding="utf-8")
@@ -62,7 +61,7 @@ def test_sac_worker_attach_and_save(tmp_path):
     worker = SACWorker()
     worker.attach_model(MockSAC())
     action = worker.act({}, deterministic=False)
-    assert pytest.approx(action["throttle"], rel=1e-6) == 0.1
+    assert pytest.approx(action["target_speed"], rel=1e-6) == 0.1
 
     out_path = tmp_path / "worker.zip"
     worker.save(str(out_path))
@@ -138,7 +137,7 @@ def test_sac_worker_process_experience_trains_and_logs():
 
     worker.process_experience(
         observation=np.zeros(5, dtype=np.float32),
-        action=np.array([0.1, 0.2, -0.3], dtype=np.float32),
+        action=np.array([0.1, -0.3], dtype=np.float32),
         reward=1.5,
         next_observation=np.ones(5, dtype=np.float32),
         done=True,
@@ -164,13 +163,12 @@ def test_sac_worker_handles_empty_and_overflow_actions():
     worker = SACWorker()
     worker.attach_model(EmptyModel())
     empty_action = worker.act({}, deterministic=True)
-    assert empty_action == {"throttle": 0.0, "brake": 0.0, "steering": 0.0}
+    assert empty_action == {"target_speed": 0.0, "target_steering": 0.0}
 
     worker.attach_model(WideModel())
     rich_action = worker.act({}, deterministic=True)
-    assert rich_action["throttle"] == pytest.approx(0.9)
-    assert rich_action["brake"] == 0.0  # brake suppressed by throttle dominance
-    assert rich_action["steering"] == pytest.approx(-0.4)
+    assert rich_action["target_speed"] == pytest.approx(0.9 * worker.TARGET_SPEED_MAX)
+    assert rich_action["target_steering"] == pytest.approx(-0.4)
 
 
 def test_dqn_manager_process_experience_trains_and_logs():

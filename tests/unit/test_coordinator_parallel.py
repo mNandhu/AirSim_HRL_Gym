@@ -129,8 +129,8 @@ def make_observation(distance: float, speed: float = 1.0) -> dict[str, Any]:
 
 def test_act_batch_tracks_per_environment_state():
     manager = TestDQNManager(["FOLLOW_LANE", "STOP"], schedule=["FOLLOW_LANE", "STOP"])
-    worker_a = TestSACWorker({"throttle": 0.5, "brake": 0.0, "steering": 0.0})
-    worker_b = TestSACWorker({"throttle": 0.0, "brake": 1.0, "steering": 0.0})
+    worker_a = TestSACWorker({"target_speed": 0.5, "target_steering": 0.0})
+    worker_b = TestSACWorker({"target_speed": 0.0, "target_steering": 0.0})
     coordinator = CommandCoordinator(manager, {"FOLLOW_LANE": worker_a, "STOP": worker_b})
 
     observations = {
@@ -151,7 +151,7 @@ def test_act_batch_tracks_per_environment_state():
 
 def test_observe_transition_for_env_routes_experience():
     manager = TestDQNManager(["FOLLOW_LANE"], schedule=["FOLLOW_LANE"])
-    worker = TestSACWorker({"throttle": 0.5, "brake": 0.0, "steering": 0.0})
+    worker = TestSACWorker({"target_speed": 0.5, "target_steering": 0.0})
     coordinator = CommandCoordinator(manager, {"FOLLOW_LANE": worker})
 
     observation = make_observation(10.0)
@@ -174,7 +174,7 @@ def test_run_parallel_executes_all_environments():
     manager = TestDQNManager(
         ["FOLLOW_LANE"], schedule=["FOLLOW_LANE", "FOLLOW_LANE", "FOLLOW_LANE"]
     )
-    worker = TestSACWorker({"throttle": 0.7, "brake": 0.0, "steering": 0.0})
+    worker = TestSACWorker({"target_speed": 0.7, "target_steering": 0.0})
     coordinator = CommandCoordinator(manager, {"FOLLOW_LANE": worker})
 
     env_a = DummyEnv("env_a")

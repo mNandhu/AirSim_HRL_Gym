@@ -14,7 +14,7 @@ class CollisionSimulator:
         return {
             "telemetry": {
                 "distance_to_goal": 5.0,
-                "speed_mps": 1.0,
+                "speed_mps": 0.0,
                 "collision": False,
                 "lane_mask_coverage_ratio": 1.0,
                 "progress_possible": True,
@@ -42,7 +42,7 @@ class GoalSimulator:
         return {
             "telemetry": {
                 "distance_to_goal": 0.4,
-                "speed_mps": 1.0,
+                "speed_mps": 0.0,
                 "collision": False,
                 "lane_mask_coverage_ratio": 1.0,
                 "progress_possible": True,
@@ -88,9 +88,9 @@ def test_collision_terminates_episode(experiment):
         reward_calculator=RewardCalculator(),
     )
     env.reset()
-    _, _, terminated, truncated, info = env.step({"throttle": 1.0, "brake": 0.0, "steering": 0.0})
+    _, _, terminated, truncated, info = env.step({"target_speed": 2.0, "target_steering": 0.0})
     assert not terminated
-    _, _, terminated, truncated, info = env.step({"throttle": 1.0, "brake": 0.0, "steering": 0.0})
+    _, _, terminated, truncated, info = env.step({"target_speed": 2.0, "target_steering": 0.0})
     assert terminated is True
     assert info["episode_step"] == 2
 
@@ -103,6 +103,6 @@ def test_goal_distance_triggers_termination(experiment):
         reward_calculator=RewardCalculator(),
     )
     env.reset()
-    _, _, terminated, truncated, info = env.step({"throttle": 0.0, "brake": 0.0, "steering": 0.0})
+    _, _, terminated, truncated, info = env.step({"target_speed": 0.0, "target_steering": 0.0})
     assert terminated is True
     assert info["episode_step"] == 1

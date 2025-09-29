@@ -1,4 +1,4 @@
-"""Wrapper around stable-baselines3 SAC for low-level continuous control."""
+"""Wrapper around stable-baselines3 SAC for low-level setpoint generation."""
 
 from __future__ import annotations
 
@@ -26,9 +26,12 @@ __all__ = ["SACWorker"]
 
 
 class SACWorker:
-    """Produces continuous control actions for throttle, brake, and steering."""
+    """Produces target speed and steering setpoints for cascaded control."""
 
-    EPSILON = 1e-4  # Used to avoid magic numbers in action selection logic
+    TARGET_SPEED_MIN = 0.0
+    TARGET_SPEED_MAX = 5.0
+    TARGET_STEERING_MIN = -1.0
+    TARGET_STEERING_MAX = 1.0
 
     def __init__(
         self,
@@ -62,13 +65,12 @@ class SACWorker:
                 shape=(5,),
                 dtype=np.float32,
             )
-            # Fixed action space to match simulator expectations:
-            # throttle: [0, 1] (not [-1, 1] since negative throttle gets clipped to 0)
-            # brake: [0, 1] (unchanged)
-            # steering: [-1, 1] (unchanged)
+            # Action space now represents target setpoints for cascaded control:
+            # target_speed: [0, 5] m/s
+            # target_steering: [-1, 1] normalized steering command
             self._action_space = action_space or spaces.Box(
-                low=np.array([0.0, 0.0, -1.0], dtype=np.float32),
-                high=np.array([1.0, 1.0, 1.0], dtype=np.float32),
+                low=np.array([self.TARGET_SPEED_MIN, self.TARGET_STEERING_MIN], dtype=np.float32),
+                high=np.array([self.TARGET_SPEED_MAX, self.TARGET_STEERING_MAX], dtype=np.float32),
                 dtype=np.float32,
             )
         else:  # pragma: no cover - gymnasium missing
@@ -153,49 +155,44 @@ class SACWorker:
 
     def act(self, observation: Any, *, deterministic: bool = False) -> dict[str, float]:
         if self._model is None:
-            # Return small forward throttle to encourage initial movement during untrained phase
-            # This helps the agent start exploring instead of staying completely stationary
-            action_dict = {"throttle": 0.2, "brake": 0.0, "steering": 0.0}
-            return action_dict
+            # Default forward setpoint to encourage exploration before training
+            return {"target_speed": 1.0, "target_steering": 0.0}
 
         action, _ = self._model.predict(observation, deterministic=deterministic)
 
         values = np.asarray(action, dtype=np.float32).reshape(-1)
 
-        if values.size == 0:
-            values = np.zeros(3, dtype=np.float32)
-        elif values.size < 3:
-            padded = np.zeros(3, dtype=np.float32)
-            padded[: values.size] = values
-            values = padded
-        elif values.size > 3:
-            values = values[:3]
+        if values.size >= 3:
+            legacy_throttle = float(np.clip(values[0], 0.0, 1.0))
+            legacy_steering = float(
+                np.clip(values[2], self.TARGET_STEERING_MIN, self.TARGET_STEERING_MAX)
+            )
+            target_speed = float(
+                np.clip(
+                    legacy_throttle * self.TARGET_SPEED_MAX,
+                    self.TARGET_SPEED_MIN,
+                    self.TARGET_SPEED_MAX,
+                )
+            )
+            target_steering = legacy_steering
+        else:
+            if values.size == 0:
+                values = np.zeros(2, dtype=np.float32)
+            elif values.size < 2:
+                padded = np.zeros(2, dtype=np.float32)
+                padded[: values.size] = values
+                values = padded
 
-        throttle, brake, steering = values
+            target_speed_raw, target_steering_raw = values
 
-        # Ensure actions are within expected bounds (match simulator expectations)
-        throttle = float(np.clip(throttle, 0.0, 1.0))  # [0, 1] for throttle
-        brake = float(np.clip(brake, 0.0, 1.0))  # [0, 1] for brake
-        steering = float(np.clip(steering, -1.0, 1.0))  # [-1, 1] for steering
+            target_speed = float(
+                np.clip(target_speed_raw, self.TARGET_SPEED_MIN, self.TARGET_SPEED_MAX)
+            )
+            target_steering = float(
+                np.clip(target_steering_raw, self.TARGET_STEERING_MIN, self.TARGET_STEERING_MAX)
+            )
 
-        # Ensure throttle and brake are mutually exclusive while tolerating
-        # floating-point noise around the decision threshold. A tiny epsilon
-        # avoids clobbering near-zero throttle values produced by tests and
-        # deterministic policies.
-        epsilon = self.EPSILON
-        if throttle > 0.1 + epsilon and brake > 0.1 + epsilon:  # If both are significant
-            # Choose the dominant action
-            if throttle > brake:
-                brake = 0.0  # Prioritize throttle
-            else:
-                throttle = 0.0  # Prioritize brake
-
-        action_dict = {
-            "throttle": throttle,
-            "brake": brake,
-            "steering": steering,
-        }
-        return action_dict
+        return {"target_speed": target_speed, "target_steering": target_steering}
 
     def process_experience(
         self,

@@ -34,9 +34,8 @@ def test_metrics_tracker_end_to_end(tmp_path: Path, frozen_time) -> None:
             step=step,
             reward=float(step),
             action={
-                "throttle": min(1.0, step / 10),
-                "brake": 0.1 if step % 3 == 0 else 0.0,
-                "steering": (-1) ** step * 0.2,
+                "target_speed": min(5.0, step / 2),
+                "target_steering": (-1) ** step * 0.2,
             },
             telemetry={
                 "speed_mps": step * 0.5,
@@ -52,7 +51,7 @@ def test_metrics_tracker_end_to_end(tmp_path: Path, frozen_time) -> None:
     tracker.log_step(
         step=1,
         reward=0.5,
-        action={"throttle": 0.6, "brake": 0.0, "steering": 0.1},
+        action={"target_speed": 0.6, "target_steering": 0.1},
         telemetry={"speed_mps": 1.2, "distance_to_goal": 5.0, "collision": False},
         reward_components=_sample_reward_components(1),
         command="FORWARD",
@@ -72,7 +71,7 @@ def test_metrics_tracker_end_to_end(tmp_path: Path, frozen_time) -> None:
 
     steps_data = json.loads(steps_path.read_text(encoding="utf-8"))
     assert [entry["step"] for entry in steps_data] == [1]
-    assert steps_data[0]["action"]["throttle"] == pytest.approx(0.6)
+    assert steps_data[0]["action"]["target_speed"] == pytest.approx(0.6)
 
     summary = tracker.get_summary_stats()
     assert summary["total_episodes"] == 2
@@ -92,7 +91,7 @@ def test_metrics_tracker_handles_idle_states(tmp_path: Path, frozen_time, capsys
     tracker.log_step(
         step=1,
         reward=1.0,
-        action={"throttle": 0.5},
+        action={"target_speed": 0.5},
         telemetry={"speed_mps": 1.0, "distance_to_goal": 9.0, "collision": False},
         reward_components=_sample_reward_components(1),
     )

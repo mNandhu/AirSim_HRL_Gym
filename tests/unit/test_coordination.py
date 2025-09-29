@@ -29,8 +29,8 @@ class DummyManager(DQNManager):
 def test_coordinator_act_returns_command_and_action():
     manager = DummyManager()
     workers = {
-        "A": DeterministicWorker({"throttle": 1.0}),
-        "B": DeterministicWorker({"throttle": 0.0}),
+        "A": DeterministicWorker({"target_speed": 1.0}),
+        "B": DeterministicWorker({"target_speed": 0.0}),
     }
     coordinator = CommandCoordinator(manager, workers)
 
@@ -38,14 +38,14 @@ def test_coordinator_act_returns_command_and_action():
     command, action = coordinator.act(observation)
 
     assert command == "A"
-    assert action["throttle"] == 1.0
+    assert action["target_speed"] == 1.0
 
 
 def test_act_sequential_cycles_workers():
     manager = DummyManager()
     workers = {
-        "A": DeterministicWorker({"throttle": 1.0}),
-        "B": DeterministicWorker({"throttle": 2.0}),
+        "A": DeterministicWorker({"target_speed": 1.0}),
+        "B": DeterministicWorker({"target_speed": 2.0}),
     }
     coordinator = CommandCoordinator(manager, workers)
 
@@ -53,5 +53,5 @@ def test_act_sequential_cycles_workers():
     cmd1, action1 = coordinator.act_sequential(observation)
     cmd2, action2 = coordinator.act_sequential(observation)
 
-    assert (cmd1, action1["throttle"]) == ("A", 1.0)
-    assert (cmd2, action2["throttle"]) == ("B", 2.0)
+    assert (cmd1, action1["target_speed"]) == ("A", 1.0)
+    assert (cmd2, action2["target_speed"]) == ("B", 2.0)

@@ -54,16 +54,23 @@ class YoloDetector:
     def run_detection(self, image: Any) -> list[dict[str, Any]]:
         if image is None:
             return []
-        try:
-            predictions = self._model(image, verbose=False, device="cuda:0")
-        except TypeError as exc:
-            message = str(exc).lower()
-            if "unexpected keyword" in message and "verbose" in message:
-                predictions = self._model(image, device="cuda:0")
-            elif "got an unexpected keyword argument" in message and "verbose" in message:
-                predictions = self._model(image, device="cuda:0")
-            else:
-                raise
+        kwarg_attempts = [
+            {"verbose": False, "device": "cuda:0"},
+            {"device": "cuda:0"},
+            {"verbose": False},
+            {},
+        ]
+        last_exc: Exception | None = None
+        for kwargs in kwarg_attempts:
+            try:
+                predictions = self._model(image, **kwargs)
+                break
+            except TypeError as exc:
+                last_exc = exc
+        else:
+            if last_exc is not None:
+                raise last_exc
+            raise RuntimeError("YOLO model invocation failed without exception")
         if not predictions:
             return []
         first = predictions[0]
