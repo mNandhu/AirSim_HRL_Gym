@@ -43,13 +43,19 @@ class RewardConfig:
     completion_bonus: float = 100.0  # Large bonus for successfully completing a high-level command.
 
     # --- Dense Shaping Coefficients (Per-step guidance) ---
-    progress_velocity_coef: float = 0.2  # Rewards velocity in the correct direction.
+    # Amplified to provide stronger immediate incentives for moving toward the goal
+    progress_velocity_coef: float = 1.2  # Rewards velocity in the correct direction.
     lane_deviation_penalty_coef: float = 2.0  # Penalizes deviation from the lane center (squared).
-    heading_alignment_coef: float = 0.5  # Rewards aligning with the path during turns.
+    # Amplified to encourage decisive turning toward the waypoint
+    heading_alignment_coef: float = 1.0  # Rewards aligning with the path during turns.
     idle_penalty_coef: float = 0.5  # Small penalty for being stationary when progress is possible.
 
     # --- Thresholds ---
     idle_threshold_mps: float = 0.1  # Speed below which the idle penalty applies.
+
+    # --- Efficiency penalty (Per-step) ---
+    # Small, negative value applied each timestep to incentivize finishing quickly
+    time_penalty: float = -0.02
 
 
 class RewardCalculator:
@@ -105,6 +111,8 @@ class RewardCalculator:
             "collision_penalty": collision,
             "completion_bonus": completion_bonus,
             "idle_penalty": idle_penalty,
+            # Applied every time step to push for efficiency
+            "time_penalty": self._config.time_penalty,
         }
         total = float(sum(components.values()))
         return components, total

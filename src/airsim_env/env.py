@@ -72,6 +72,7 @@ class AirSimEnv:
                 "collision_penalty": 0.0,
                 "completion_bonus": 0.0,
                 "idle_penalty": 0.0,
+                "time_penalty": 0.0,
             },
             done_flags={"terminated": False, "truncated": False},
         )

@@ -86,6 +86,7 @@ def test_observation_contains_expected_fields(experiment):
         "collision_penalty",
         "completion_bonus",
         "idle_penalty",
+        "time_penalty",
     }
 
     observation, reward, terminated, truncated, info = env.step(

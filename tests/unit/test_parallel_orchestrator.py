@@ -62,7 +62,8 @@ def test_launch_training_jobs_sets_environment(monkeypatch: pytest.MonkeyPatch) 
                 "env": {"CUDA_VISIBLE_DEVICES": "0"},
                 "cwd": None,
             }
-        ]
+        ],
+        base_port=41451,
     )
 
     assert "trainer" in jobs
@@ -70,7 +71,9 @@ def test_launch_training_jobs_sets_environment(monkeypatch: pytest.MonkeyPatch) 
     assert captures[0]["env"]["CUDA_VISIBLE_DEVICES"] == "0"
 
 
-def test_launch_airsim_instances_invokes_runner(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_launch_airsim_instances_invokes_runner(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     def fake_launch(mode, settings_path, **kwargs):  # type: ignore[no-untyped-def]
         return SimulatorSession(
             pid=1234,
@@ -88,14 +91,18 @@ def test_launch_airsim_instances_invokes_runner(monkeypatch: pytest.MonkeyPatch)
                 "mode": "headless",
                 "settings": "settings.json",
             }
-        ]
+        ],
+        run_dir=tmp_path,
+        base_port=41451,
     )
 
     assert "sim0" in sessions
     assert sessions["sim0"].pid == 1234
 
 
-def test_launch_airsim_instances_platform_specific_command(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_launch_airsim_instances_platform_specific_command(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     commands: list[list[str] | None] = []
 
     def fake_launch(mode, settings_path, **kwargs):  # type: ignore[no-untyped-def]
@@ -119,7 +126,9 @@ def test_launch_airsim_instances_platform_specific_command(monkeypatch: pytest.M
                 "command_windows": ["windows"],
                 "command_linux": ["linux"],
             }
-        ]
+        ],
+        run_dir=tmp_path,
+        base_port=41451,
     )
 
     assert commands[0] == ["linux"]

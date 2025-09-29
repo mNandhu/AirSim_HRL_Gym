@@ -67,18 +67,36 @@ training_jobs:
 
     monkeypatch.setattr("airsim.CarClient", MockCarClient)
 
-    # Mock the subprocess.Popen to control the training job process
+    # Mock the subprocess.Popen to simulate trainer behavior and avoid external deps
     original_popen = subprocess.Popen
-    popen_calls = []
+    popen_calls: list[list[str]] = []
+
+    class DummyProcess:
+        def __init__(self, pid: int):
+            self.pid = pid
+            self._polls = [None, 0]
+
+        def poll(self):
+            if len(self._polls) > 1:
+                return self._polls.pop(0)
+            return self._polls[0]
+
+        def wait(self):
+            self._polls = [0]
+            return 0
+
+        def send_signal(self, _signal: int) -> None:
+            self._polls = [0]
 
     def mock_popen(command, *args, **kwargs):
-        if "dummy_trainer.py" in command:
-            # It's our dummy trainer, let's run it with 'uv run'
-            new_command = ["uv", "run", "python", command[-1]]
-            popen_calls.append(new_command)
-            # The subprocess needs the current environment to find `uv`
-            kwargs["env"] = os.environ.copy()
-            return original_popen(new_command, *args, **kwargs)
+        # Detect our dummy trainer by filename even if full path is provided
+        if any(str(arg).endswith("dummy_trainer.py") for arg in command):
+            env = kwargs.get("env", os.environ)
+            port = env.get("AIRSIM_PORT", "41451")
+            log_path = tmp_path / f"trainer_{port}.log"
+            log_path.write_text(f"Connected to port {port}", encoding="utf-8")
+            popen_calls.append(["python", command[-1]])
+            return DummyProcess(pid=3000)
         return original_popen(command, *args, **kwargs)
 
     monkeypatch.setattr("scripts.parallel_orchestrator.subprocess.Popen", mock_popen)
@@ -106,5 +124,5 @@ training_jobs:
     assert log1_path.read_text() == "Connected to port 41451"
     assert log2_path.read_text() == "Connected to port 41452"
     assert len(popen_calls) == 2
-    assert popen_calls[0][0] == "uv"
-    assert popen_calls[1][0] == "uv"
+    assert popen_calls[0][0] == "python"
+    assert popen_calls[1][0] == "python"
