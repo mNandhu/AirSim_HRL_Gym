@@ -129,10 +129,13 @@ class AirSimSimulatorAdapter:
         # Calculate distance to goal (if experiment provided)
         distance_to_goal = 999.0
         goal_pose = getattr(experiment, "goal_pose", None) or self._goal_pose
+        position = car_state.kinematics_estimated.position
+        pos_xy = (float(position.x_val), float(position.y_val))
+        goal_xy: tuple[float, float] | None = None
         if goal_pose is not None:
-            pos = car_state.kinematics_estimated.position
+            goal_xy = (float(goal_pose.x), float(goal_pose.y))
             distance_to_goal = math.sqrt(
-                (pos.x_val - goal_pose.x) ** 2 + (pos.y_val - goal_pose.y) ** 2
+                (position.x_val - goal_pose.x) ** 2 + (position.y_val - goal_pose.y) ** 2
             )
 
         velocity = _vector_from_airsim(car_state.kinematics_estimated.linear_velocity)
@@ -166,6 +169,8 @@ class AirSimSimulatorAdapter:
                 "lane_mask_coverage_ratio": 1.0,  # Simplified
                 "progress_possible": progress_possible,
                 "sim_time_sec": self._accumulator_time,
+                "position_xy": pos_xy,
+                "goal_xy": goal_xy,
             },
             "image": self._get_camera_image(),
         }

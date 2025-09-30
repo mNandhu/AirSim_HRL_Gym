@@ -59,6 +59,12 @@ class HRLOrchestrator:
                 elif isinstance(observation, dict) and "reward_components" in observation:
                     reward_components = observation["reward_components"]
 
+                next_telemetry = None
+                if hasattr(next_observation, "telemetry"):
+                    next_telemetry = next_observation.telemetry
+                elif isinstance(next_observation, dict) and "telemetry" in next_observation:
+                    next_telemetry = next_observation["telemetry"]
+
                 metrics_tracker.log_step(
                     step=steps,
                     reward=reward,
@@ -66,6 +72,7 @@ class HRLOrchestrator:
                     telemetry=telemetry,
                     reward_components=reward_components,
                     command=command,
+                    next_telemetry=next_telemetry,
                 )
 
             if not deterministic:
@@ -153,6 +160,12 @@ class HRLOrchestrator:
                     ):
                         reward_components = prev_observation["reward_components"]
 
+                    next_telemetry = None
+                    if hasattr(next_observation, "telemetry"):
+                        next_telemetry = next_observation.telemetry
+                    elif isinstance(next_observation, dict) and "telemetry" in next_observation:
+                        next_telemetry = next_observation["telemetry"]
+
                     metrics_tracker.log_step(
                         step=step_counts[env_id] - 1,
                         reward=reward,
@@ -160,6 +173,7 @@ class HRLOrchestrator:
                         telemetry=telemetry,
                         reward_components=reward_components,
                         command=command,
+                        next_telemetry=next_telemetry,
                     )
 
                 if not deterministic:

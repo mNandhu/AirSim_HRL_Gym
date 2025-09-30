@@ -27,9 +27,13 @@ except ImportError:  # pragma: no cover
 class DummySimulator:
     def __init__(self, horizon: int) -> None:
         self._remaining = horizon
+        self._position = 0.0
+        self._goal_xy = (float(horizon), 0.0)
 
     def reset(self, experiment):
         self._remaining = experiment.horizon
+        self._position = 0.0
+        self._goal_xy = (float(experiment.goal_pose.x), float(experiment.goal_pose.y))
         return {
             "telemetry": {
                 "distance_to_goal": float(self._remaining),
@@ -37,12 +41,15 @@ class DummySimulator:
                 "collision": False,
                 "lane_mask_coverage_ratio": 1.0,
                 "progress_possible": True,
+                "position_xy": (float(experiment.start_pose.x), float(experiment.start_pose.y)),
+                "goal_xy": self._goal_xy,
             },
             "image": None,
         }
 
     def step(self, action):
         self._remaining = max(0, self._remaining - 1)
+        self._position += action.get("throttle", 0.0)
         return {
             "telemetry": {
                 "distance_to_goal": float(self._remaining),
@@ -50,6 +57,8 @@ class DummySimulator:
                 "collision": False,
                 "lane_mask_coverage_ratio": 1.0,
                 "progress_possible": True,
+                "position_xy": (self._position, 0.0),
+                "goal_xy": self._goal_xy,
             },
             "image": None,
         }

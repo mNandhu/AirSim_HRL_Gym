@@ -33,10 +33,12 @@ class AirSimSimulatorAdapter:
         self._step = 0
         self._horizon = horizon
         self._distance = float(horizon)
+        self._position = 0.0
 
     def reset(self, experiment) -> dict[str, Any]:  # noqa: ANN001 - aligns with env expectations
         self._step = 0
         self._distance = float(experiment.horizon)
+        self._position = 0.0
         pose = experiment.start_pose
         if (
             self._client is not None
@@ -49,17 +51,37 @@ class AirSimSimulatorAdapter:
                 self._client.simSetVehiclePose(airsim.Pose(position, orientation), True)
             except Exception:
                 pass
-        return _state_dict(self._distance, 0.0)
+        goal_xy = (float(experiment.goal_pose.x), float(experiment.goal_pose.y))
+        return _state_dict(
+            self._distance,
+            0.0,
+            position_xy=(float(pose.x), float(pose.y)),
+            goal_xy=goal_xy,
+        )
 
     def step(self, action: dict[str, float]) -> dict[str, Any]:
         throttle = float(action.get("throttle", 0.0))
         self._step += 1
         progress = max(throttle, 0.0)
         self._distance = max(0.0, self._distance - progress)
-        return _state_dict(self._distance, throttle, progress_possible=True)
+        self._position += progress
+        return _state_dict(
+            self._distance,
+            throttle,
+            progress_possible=True,
+            position_xy=(self._position, 0.0),
+            goal_xy=(self._horizon, 0.0),
+        )
 
 
-def _state_dict(distance: float, speed: float, *, progress_possible: bool = True) -> dict[str, Any]:
+def _state_dict(
+    distance: float,
+    speed: float,
+    *,
+    progress_possible: bool = True,
+    position_xy: tuple[float, float] | None = None,
+    goal_xy: tuple[float, float] | None = None,
+) -> dict[str, Any]:
     return {
         "telemetry": {
             "distance_to_goal": distance,
@@ -67,6 +89,8 @@ def _state_dict(distance: float, speed: float, *, progress_possible: bool = True
             "collision": False,
             "lane_mask_coverage_ratio": 1.0,
             "progress_possible": progress_possible,
+            "position_xy": position_xy,
+            "goal_xy": goal_xy,
         },
         "image": None,
     }

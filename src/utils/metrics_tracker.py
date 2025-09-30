@@ -8,7 +8,7 @@ import time
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 import matplotlib
 import numpy as np
@@ -35,6 +35,33 @@ except Exception:
 __all__ = ["MetricsTracker", "EpisodeMetrics", "StepMetrics"]
 
 
+def _normalize_xy(value: Any) -> Optional[Tuple[float, float]]:
+    """Convert various (x, y) representations into a float tuple."""
+
+    if value is None:
+        return None
+
+    if isinstance(value, Mapping):
+        if "x" not in value or "y" not in value:
+            return None
+        value = (value["x"], value["y"])
+
+    if isinstance(value, np.ndarray):
+        if value.size < 2:
+            return None
+        value = (value.flat[0], value.flat[1])
+
+    if isinstance(value, (tuple, list)):
+        if len(value) < 2:
+            return None
+        try:
+            return float(value[0]), float(value[1])
+        except (TypeError, ValueError):
+            return None
+
+    return None  # pragma: no cover - defensive fallback for unsupported types
+
+
 @dataclass
 class StepMetrics:
     """Metrics for a single step within an episode."""
@@ -55,6 +82,8 @@ class StepMetrics:
     completion_bonus: float = 0.0
     idle_penalty: float = 0.0
     time_penalty: float = 0.0
+    position_xy: Optional[Tuple[float, float]] = None
+    goal_xy: Optional[Tuple[float, float]] = None
 
 
 @dataclass
@@ -109,6 +138,10 @@ class MetricsTracker:
         self.recent_rewards = deque(maxlen=100)  # Last 100 steps
         self.recent_speeds = deque(maxlen=100)
 
+        # Position tracking for trajectory plotting
+        self.current_episode_positions: List[Tuple[float, float]] = []
+        self.current_target_xy: Optional[Tuple[float, float]] = None
+
         # Plotting setup
         plt.ioff()  # Turn off interactive mode for better performance
 
@@ -121,6 +154,8 @@ class MetricsTracker:
         self.current_episode = episode
         self.current_episode_start_time = time.time()
         self.current_episode_steps = []
+        self.current_episode_positions = []
+        self.current_target_xy = None
         print(f"📊 Started tracking episode {episode}")
 
     def log_step(
@@ -131,6 +166,7 @@ class MetricsTracker:
         telemetry: Dict[str, Any],
         reward_components: Dict[str, float],
         command: Optional[str] = None,
+        next_telemetry: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Log metrics for a single step."""
         if self.current_episode is None:
@@ -143,6 +179,26 @@ class MetricsTracker:
         speed_mps = telemetry.get("speed_mps", 0.0)
         distance_to_goal = telemetry.get("distance_to_goal", 0.0)
         collision = telemetry.get("collision", False)
+        position_xy = _normalize_xy(telemetry.get("position_xy"))
+        goal_xy = _normalize_xy(telemetry.get("goal_xy"))
+
+        next_position_xy: Optional[Tuple[float, float]] = None
+        next_goal_xy: Optional[Tuple[float, float]] = None
+        if next_telemetry is not None:
+            next_position_xy = _normalize_xy(next_telemetry.get("position_xy"))
+            next_goal_xy = _normalize_xy(next_telemetry.get("goal_xy"))
+
+        if goal_xy is None and next_goal_xy is not None:
+            goal_xy = next_goal_xy
+
+        self._record_position(position_xy)
+        self._record_position(next_position_xy)
+
+        if goal_xy is None and self.current_target_xy is not None:
+            goal_xy = self.current_target_xy
+
+        if goal_xy is not None:
+            self.current_target_xy = goal_xy
 
         # Create step metrics
         step_metrics = StepMetrics(
@@ -160,6 +216,8 @@ class MetricsTracker:
             completion_bonus=reward_components.get("completion_bonus", 0.0),
             idle_penalty=reward_components.get("idle_penalty", 0.0),
             time_penalty=reward_components.get("time_penalty", 0.0),
+            position_xy=position_xy,
+            goal_xy=goal_xy,
         )
 
         self.current_episode_steps.append(step_metrics)
@@ -192,6 +250,20 @@ class MetricsTracker:
         self._plot_thread = threading.Thread(target=_worker, name="metrics-plotter", daemon=True)
         self._plot_thread.start()
 
+    def _record_position(self, position: Optional[Tuple[float, float]]) -> None:
+        """Store a new (x, y) waypoint if it differs from the previous sample."""
+
+        if position is None:
+            return
+
+        if self.current_episode_positions:
+            last_x, last_y = self.current_episode_positions[-1]
+            new_x, new_y = position
+            if abs(last_x - new_x) < 1e-6 and abs(last_y - new_y) < 1e-6:
+                return
+
+        self.current_episode_positions.append(position)
+
     def finish_episode(self, completed_successfully: bool = False) -> None:
         """Finish the current episode."""
         if self.current_episode is None:
@@ -206,6 +278,8 @@ class MetricsTracker:
         self.current_episode_steps = []
         self.current_episode = None
         self.current_episode_start_time = None
+        self.current_episode_positions = []
+        self.current_target_xy = None
 
     def _finish_episode(self, completed_successfully: bool = False) -> None:
         """Internal method to finish episode tracking."""
@@ -277,6 +351,7 @@ class MetricsTracker:
             self._plot_episode_summary()
             self._plot_action_analysis()
             self._plot_performance_metrics()
+            self._plot_trajectory_map()
         except Exception as e:
             print(f"⚠️  Warning: Failed to update graphs: {e}")
 
@@ -554,6 +629,68 @@ class MetricsTracker:
             pass
         plt.close()
 
+    def _plot_trajectory_map(self) -> None:
+        """Render a top-down trajectory map for the current episode."""
+
+        if not self.current_episode_positions:
+            return
+
+        positions = np.asarray(self.current_episode_positions, dtype=float)
+        if positions.ndim != 2 or positions.shape[1] < 2:
+            return
+
+        xs = positions[:, 0]
+        ys = positions[:, 1]
+
+        extent_xs = xs
+        extent_ys = ys
+        if self.current_target_xy is not None:
+            tx, ty = self.current_target_xy
+            extent_xs = np.append(extent_xs, tx)
+            extent_ys = np.append(extent_ys, ty)
+
+        fig, ax = plt.subplots(figsize=(8, 8))
+        ax.plot(xs, ys, color="navy", linewidth=2, label="Trajectory")
+        ax.scatter(xs[0], ys[0], color="green", s=60, label="Start", zorder=3)
+        ax.scatter(xs[-1], ys[-1], color="orange", s=60, label="Latest", zorder=3)
+
+        if self.current_target_xy is not None:
+            tx, ty = self.current_target_xy
+            ax.scatter(tx, ty, color="red", marker="*", s=140, label="Target", zorder=4)
+
+        min_x, max_x = float(np.min(extent_xs)), float(np.max(extent_xs))
+        min_y, max_y = float(np.min(extent_ys)), float(np.max(extent_ys))
+
+        if np.isclose(min_x, max_x):
+            min_x -= 1.0
+            max_x += 1.0
+        if np.isclose(min_y, max_y):
+            min_y -= 1.0
+            max_y += 1.0
+
+        pad_x = max(0.5, (max_x - min_x) * 0.1)
+        pad_y = max(0.5, (max_y - min_y) * 0.1)
+
+        ax.set_xlim(min_x - pad_x, max_x + pad_x)
+        ax.set_ylim(min_y - pad_y, max_y + pad_y)
+        ax.set_aspect("equal", adjustable="box")
+        ax.set_xlabel("X (m)")
+        ax.set_ylabel("Y (m)")
+        title_episode = self.current_episode if self.current_episode is not None else "latest"
+        ax.set_title(f"Vehicle Trajectory (Episode {title_episode})")
+        ax.grid(True, alpha=0.3)
+        ax.legend(loc="best")
+
+        plt.tight_layout()
+        plt.savefig(self.metrics_dir / "trajectory.png", dpi=100, bbox_inches="tight")
+        try:
+            if self.current_episode is not None:
+                ep_path = self.metrics_dir / f"trajectory_ep{self.current_episode}.png"
+                plt.savefig(ep_path, dpi=100, bbox_inches="tight")
+        except Exception:
+            pass
+        plt.close()
+
     def _save_metrics(self) -> None:
         """Save metrics data to JSON files."""
         try:
@@ -596,6 +733,10 @@ class MetricsTracker:
                             "speed_mps": step.speed_mps,
                             "distance_to_goal": step.distance_to_goal,
                             "collision": step.collision,
+                            "position_xy": list(step.position_xy)
+                            if step.position_xy is not None
+                            else None,
+                            "goal_xy": list(step.goal_xy) if step.goal_xy is not None else None,
                             "reward_components": {
                                 "command_shaping": step.command_shaping,
                                 "collision_penalty": step.collision_penalty,
@@ -610,6 +751,24 @@ class MetricsTracker:
                     self.metrics_dir / f"episode_{self.current_episode}_steps.json", "w"
                 ) as f:
                     json.dump(steps_data, f, indent=2)
+
+                if self.current_episode_positions and self.current_episode is not None:
+                    trajectory_payload = {
+                        "positions": [
+                            [float(pos[0]), float(pos[1])] for pos in self.current_episode_positions
+                        ],
+                        "target": [
+                            float(self.current_target_xy[0]),
+                            float(self.current_target_xy[1]),
+                        ]
+                        if self.current_target_xy is not None
+                        else None,
+                    }
+
+                    with open(
+                        self.metrics_dir / f"trajectory_ep{self.current_episode}.json", "w"
+                    ) as f:
+                        json.dump(trajectory_payload, f, indent=2)
 
         except Exception as e:
             print(f"⚠️  Warning: Failed to save metrics: {e}")
