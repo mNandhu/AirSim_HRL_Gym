@@ -1,6 +1,8 @@
 {
+  "SettingsVersion": 1.2,
   "SimMode": "Car",
   "ClockSpeed": 1,
+  "ApiServerPort": 41451,
   "Vehicles": {
     "DefaultSedan": {
       "VehicleType": "PhysXCar",
