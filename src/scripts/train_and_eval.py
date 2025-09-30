@@ -349,9 +349,38 @@ def train_mode(args) -> int:
     artifact_manager = ArtifactManager(args.output)
     run_paths = artifact_manager.start_run(f"train_{experiment.id}")
 
-    # Create model directory scoped to this run to avoid overwrites
+    # Determine model directory for saving and optionally loading
     model_root = Path(args.models)
     model_root.mkdir(exist_ok=True, parents=True)
+
+    # Resolve resume source if specified
+    resume_model_dir = None
+    if args.resume_from:
+        resume_model_dir = model_root / args.resume_from
+
+        # If --resume-best is specified, load from best-models/ subdirectory
+        if args.resume_best:
+            resume_model_dir = resume_model_dir / "best-models"
+
+        if not resume_model_dir.exists():
+            print(f"❌ Error: Resume directory not found: {resume_model_dir}")
+            print(f"\nAvailable runs in {model_root}:")
+            available_runs = sorted([d.name for d in model_root.iterdir() if d.is_dir()])
+            if available_runs:
+                for run in available_runs[-10:]:  # Show last 10
+                    print(f"  - {run}")
+            else:
+                print("  (none)")
+            return 1
+
+        model_type = "best" if args.resume_best else "latest"
+        print(f"🔄 Resuming from {model_type} models: {resume_model_dir}")
+    elif args.resume:
+        # Backward compatibility: load from top-level models/
+        resume_model_dir = model_root
+        print(f"🔄 Resuming from top-level: {resume_model_dir}")
+
+    # Create new model directory scoped to this run for saving
     run_tag = run_paths.run_dir.name  # e.g., 20250925T081041Z_train_<uuid>
     model_dir = model_root / run_tag
     model_dir.mkdir(exist_ok=True, parents=True)
@@ -442,9 +471,11 @@ def train_mode(args) -> int:
         expected_total_timesteps = (
             args.episodes * args.max_steps if args.max_steps and args.episodes else None
         )
+        # Use resume_model_dir if resuming, otherwise coordinator won't load models
+        load_from_dir = str(resume_model_dir) if resume_model_dir else args.models
         coordinator = _create_coordinator(
-            load_models=args.resume,
-            model_dir=args.models,
+            load_models=(args.resume or args.resume_from is not None),
+            model_dir=load_from_dir,
             log_root=sb3_log_root,
             exploration_fraction=0.8,
             exploration_initial_eps=1.0,
@@ -759,7 +790,21 @@ def parse_args() -> argparse.Namespace:
         "--save-interval", type=int, default=10, help="Save models every N episodes"
     )
     train_parser.add_argument("--models", default="models", help="Model directory")
-    train_parser.add_argument("--resume", action="store_true", help="Resume from saved models")
+    train_parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume from saved models (top-level for backward compatibility)",
+    )
+    train_parser.add_argument(
+        "--resume-from",
+        type=str,
+        help="Resume from a specific run ID (e.g., 20250930T154745Z_train_8591ac4c...)",
+    )
+    train_parser.add_argument(
+        "--resume-best",
+        action="store_true",
+        help="Resume from best-models/ subdirectory (use with --resume-from)",
+    )
     train_parser.add_argument("--settings", default="settings.json", help="AirSim settings")
     train_parser.add_argument("--mode", choices=["gui", "headless"], default="gui")
     train_parser.add_argument("--max-steps", type=int, default=1000)
