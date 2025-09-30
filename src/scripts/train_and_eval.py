@@ -240,6 +240,7 @@ def _create_coordinator(
 
     # Load or create DQN manager model
     if load_models:
+        # For resume, prefer top-level models directory (backward compatibility)
         model_path = Path(model_dir) / "dqn_manager.zip"
         if model_path.exists():
             manager.load_from_path(str(model_path), log_dir=manager_log_dir)
@@ -299,8 +300,11 @@ def train_mode(args) -> int:
     artifact_manager = ArtifactManager(args.output)
     run_paths = artifact_manager.start_run(f"train_{experiment.id}")
 
-    # Create model directory
-    model_dir = Path(args.models)
+    # Create model directory scoped to this run to avoid overwrites
+    model_root = Path(args.models)
+    model_root.mkdir(exist_ok=True, parents=True)
+    run_tag = run_paths.run_dir.name  # e.g., 20250925T081041Z_train_<uuid>
+    model_dir = model_root / run_tag
     model_dir.mkdir(exist_ok=True, parents=True)
 
     # Resolve settings path (prefer the orchestrator-provided path if present)
@@ -431,6 +435,9 @@ def train_mode(args) -> int:
 
         # Training loop
         training_stats = []
+        best_reward = float("-inf")
+        best_episode = 0
+        best_model_dir = model_dir / "best-models"
         for episode in range(args.episodes):
             print(f"\n=== Episode {episode + 1}/{args.episodes} ===")
 
@@ -479,6 +486,24 @@ def train_mode(args) -> int:
 
                 print("Models saved!")
 
+            # Save best models when improvement occurs
+            if result.cumulative_reward >= best_reward:
+                # Improvement or first episode
+                best_reward = result.cumulative_reward
+                best_episode = episode + 1
+                try:
+                    best_model_dir.mkdir(parents=True, exist_ok=True)
+                    if coordinator._manager.model is not None:
+                        coordinator._manager.save(str(best_model_dir / "dqn_manager.zip"))
+                    for command, worker in coordinator._workers.items():
+                        if worker._model is not None:
+                            worker.save(str(best_model_dir / f"sac_{command.lower()}.zip"))
+                    print(
+                        f"🏅 New best reward {best_reward:.2f} at episode {best_episode} — saved to: {best_model_dir}"
+                    )
+                except Exception as _exc:
+                    print(f"Warning: best-models save failed: {_exc}")
+
             # Log stats
             artifact_manager.append_jsonl("training_log.jsonl", stats)
 
@@ -495,6 +520,18 @@ def train_mode(args) -> int:
         },
     )
 
+    # Always save final models (ensures latest policy is persisted regardless of interval)
+    try:
+        if coordinator._manager.model is not None:
+            coordinator._manager.save(str(model_dir / "dqn_manager.zip"))
+        for command, worker in coordinator._workers.items():
+            if worker._model is not None:
+                worker.save(str(model_dir / f"sac_{command.lower()}.zip"))
+        print(f"Final models saved to: {model_dir}")
+    except Exception as _exc:
+        # Do not fail the run if save throws; logs already captured
+        print(f"Warning: final model save failed: {_exc}")
+
     # Print final metrics summary
     summary_stats = metrics_tracker.get_summary_stats()
     if summary_stats:
@@ -510,6 +547,10 @@ def train_mode(args) -> int:
 
     print("\n✅ Training completed!")
     print(f"Models saved to: {model_dir}")
+    if best_episode > 0:
+        print(
+            f"Best models (episode {best_episode}, reward {best_reward:.2f}) saved to: {best_model_dir}"
+        )
     print(f"Logs saved to: {run_paths.run_dir}")
     print(f"📊 Metrics and graphs saved to: {run_paths.run_dir}/metrics/")
     print("   - reward.png: Real-time reward trends")
