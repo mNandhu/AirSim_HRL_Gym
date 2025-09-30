@@ -127,6 +127,7 @@ class MetricsTracker:
         self._async_plots = async_plots
         self._plot_thread: Optional[threading.Thread] = None
         self.step_counter = 0
+        self._plot_lock = threading.Lock()
 
         # Data storage
         self.episode_metrics: List[EpisodeMetrics] = []
@@ -346,32 +347,48 @@ class MetricsTracker:
 
     def _update_graphs(self) -> None:
         """Update all visualization graphs."""
+        episodes_dir = self.metrics_dir / "episodes"
+        episodes_dir.mkdir(parents=True, exist_ok=True)
+
+        # Snapshot mutable data to avoid races with writers
+        steps_snapshot = list(self.current_episode_steps)
+        episode_metrics_snapshot = list(self.episode_metrics)
+        current_episode = self.current_episode
+        positions_snapshot = list(self.current_episode_positions)
+        target_snapshot = self.current_target_xy
+
         try:
-            self._plot_reward_trends()
-            self._plot_episode_summary()
-            self._plot_action_analysis()
-            self._plot_performance_metrics()
-            self._plot_trajectory_map()
+            with self._plot_lock:
+                self._plot_reward_trends(steps_snapshot, current_episode, episodes_dir)
+                self._plot_episode_summary(episode_metrics_snapshot)
+                self._plot_action_analysis(steps_snapshot, current_episode, episodes_dir)
+                self._plot_performance_metrics(steps_snapshot, current_episode, episodes_dir)
+                self._plot_trajectory_map(positions_snapshot, target_snapshot, current_episode)
         except Exception as e:
             print(f"⚠️  Warning: Failed to update graphs: {e}")
 
-    def _plot_reward_trends(self) -> None:
+    def _plot_reward_trends(
+        self,
+        steps_snapshot: list[StepMetrics],
+        current_episode: Optional[int],
+        episodes_dir: Path,
+    ) -> None:
         """Plot real-time reward trends."""
-        if not self.current_episode_steps:
+        if not steps_snapshot:
             return
 
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8))
         fig.suptitle("Reward Trends", fontsize=16, fontweight="bold")
 
         # Step-by-step reward
-        steps = [s.step for s in self.current_episode_steps]
-        rewards = [s.reward for s in self.current_episode_steps]
-        cumulative_rewards = [s.cumulative_reward for s in self.current_episode_steps]
+        steps = [s.step for s in steps_snapshot]
+        rewards = [s.reward for s in steps_snapshot]
+        cumulative_rewards = [s.cumulative_reward for s in steps_snapshot]
 
         ax1.plot(steps, rewards, "b-", alpha=0.7, linewidth=1, label="Step Reward")
         ax1.axhline(y=0, color="gray", linestyle="--", alpha=0.5)
         ax1.set_ylabel("Reward")
-        ax1.set_title(f"Step Rewards (Episode {self.current_episode})")
+        ax1.set_title(f"Step Rewards (Episode {current_episode})")
         ax1.grid(True, alpha=0.3)
         ax1.legend()
 
@@ -393,27 +410,27 @@ class MetricsTracker:
         # Save latest and per-episode variants for comparison across episodes
         plt.savefig(self.metrics_dir / "reward.png", dpi=100, bbox_inches="tight")
         try:
-            if self.current_episode is not None:
-                ep_path = self.metrics_dir / f"reward_ep{self.current_episode}.png"
+            if current_episode is not None:
+                ep_path = episodes_dir / f"reward_ep{current_episode}.png"
                 plt.savefig(ep_path, dpi=100, bbox_inches="tight")
         except Exception:
             # Proceed even if per-episode save fails
             pass
         plt.close()
 
-    def _plot_episode_summary(self) -> None:
+    def _plot_episode_summary(self, episode_metrics_snapshot: list[EpisodeMetrics]) -> None:
         """Plot episode-level summary statistics."""
-        if not self.episode_metrics:
+        if not episode_metrics_snapshot:
             return
 
         fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(14, 10))
         fig.suptitle("Episode Summary", fontsize=16, fontweight="bold")
 
-        episodes = [e.episode for e in self.episode_metrics]
-        rewards = [e.cumulative_reward for e in self.episode_metrics]
-        steps = [e.total_steps for e in self.episode_metrics]
-        max_speeds = [e.max_speed for e in self.episode_metrics]
-        min_distances = [e.min_distance_to_goal for e in self.episode_metrics]
+        episodes = [e.episode for e in episode_metrics_snapshot]
+        rewards = [e.cumulative_reward for e in episode_metrics_snapshot]
+        steps = [e.total_steps for e in episode_metrics_snapshot]
+        max_speeds = [e.max_speed for e in episode_metrics_snapshot]
+        min_distances = [e.min_distance_to_goal for e in episode_metrics_snapshot]
 
         # Episode rewards
         ax1.bar(episodes, rewards, alpha=0.7, color="skyblue", edgecolor="navy")
@@ -447,25 +464,26 @@ class MetricsTracker:
         plt.savefig(self.metrics_dir / "episode_summary.png", dpi=100, bbox_inches="tight")
         plt.close()
 
-    def _plot_action_analysis(self) -> None:
+    def _plot_action_analysis(
+        self,
+        steps_snapshot: list[StepMetrics],
+        current_episode: Optional[int],
+        episodes_dir: Path,
+    ) -> None:
         """Plot action distribution and trends."""
-        if not self.current_episode_steps:
+        if not steps_snapshot:
             return
 
         fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(14, 10))
-        fig.suptitle(
-            f"Action Analysis (Episode {self.current_episode})", fontsize=16, fontweight="bold"
-        )
+        fig.suptitle(f"Action Analysis (Episode {current_episode})", fontsize=16, fontweight="bold")
 
-        steps = [s.step for s in self.current_episode_steps]
+        steps = [s.step for s in steps_snapshot]
         target_speeds = [
-            s.action.get("target_speed", s.action.get("throttle", 0.0))
-            for s in self.current_episode_steps
+            s.action.get("target_speed", s.action.get("throttle", 0.0)) for s in steps_snapshot
         ]
-        speeds = [s.speed_mps for s in self.current_episode_steps]
+        speeds = [s.speed_mps for s in steps_snapshot]
         target_steerings = [
-            s.action.get("target_steering", s.action.get("steering", 0.0))
-            for s in self.current_episode_steps
+            s.action.get("target_steering", s.action.get("steering", 0.0)) for s in steps_snapshot
         ]
 
         # Target speed over time
@@ -508,33 +526,38 @@ class MetricsTracker:
         # Save latest and per-episode variants
         plt.savefig(self.metrics_dir / "action_analysis.png", dpi=100, bbox_inches="tight")
         try:
-            if self.current_episode is not None:
-                ep_path = self.metrics_dir / f"action_analysis_ep{self.current_episode}.png"
+            if current_episode is not None:
+                ep_path = episodes_dir / f"action_analysis_ep{current_episode}.png"
                 plt.savefig(ep_path, dpi=100, bbox_inches="tight")
         except Exception:
             pass
         plt.close()
 
-    def _plot_performance_metrics(self) -> None:
+    def _plot_performance_metrics(
+        self,
+        steps_snapshot: list[StepMetrics],
+        current_episode: Optional[int],
+        episodes_dir: Path,
+    ) -> None:
         """Plot performance metrics like speed and distance."""
-        if not self.current_episode_steps:
+        if not steps_snapshot:
             return
 
         fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 10))
         fig.suptitle(
-            f"Performance Metrics (Episode {self.current_episode})", fontsize=16, fontweight="bold"
+            f"Performance Metrics (Episode {current_episode})", fontsize=16, fontweight="bold"
         )
 
-        steps = [s.step for s in self.current_episode_steps]
-        speeds = [s.speed_mps for s in self.current_episode_steps]
-        distances = [s.distance_to_goal for s in self.current_episode_steps]
+        steps = [s.step for s in steps_snapshot]
+        speeds = [s.speed_mps for s in steps_snapshot]
+        distances = [s.distance_to_goal for s in steps_snapshot]
 
         # Reward components
-        command_shaping = [s.command_shaping for s in self.current_episode_steps]
-        collision_penalties = [s.collision_penalty for s in self.current_episode_steps]
-        completion_bonuses = [s.completion_bonus for s in self.current_episode_steps]
-        idle_penalties = [s.idle_penalty for s in self.current_episode_steps]
-        time_penalties = [s.time_penalty for s in self.current_episode_steps]
+        command_shaping = [s.command_shaping for s in steps_snapshot]
+        collision_penalties = [s.collision_penalty for s in steps_snapshot]
+        completion_bonuses = [s.completion_bonus for s in steps_snapshot]
+        idle_penalties = [s.idle_penalty for s in steps_snapshot]
+        time_penalties = [s.time_penalty for s in steps_snapshot]
 
         # Speed over time
         ax1.plot(steps, speeds, "purple", linewidth=2, label="Speed")
@@ -622,20 +645,32 @@ class MetricsTracker:
         # Save latest and per-episode variants
         plt.savefig(self.metrics_dir / "performance_metrics.png", dpi=100, bbox_inches="tight")
         try:
-            if self.current_episode is not None:
-                ep_path = self.metrics_dir / f"performance_metrics_ep{self.current_episode}.png"
+            if current_episode is not None:
+                ep_path = episodes_dir / f"performance_metrics_ep{current_episode}.png"
                 plt.savefig(ep_path, dpi=100, bbox_inches="tight")
         except Exception:
             pass
         plt.close()
 
-    def _plot_trajectory_map(self) -> None:
+    def _plot_trajectory_map(
+        self,
+        positions_snapshot: Optional[list[tuple[float, float]]] = None,
+        target_snapshot: Optional[tuple[float, float]] = None,
+        current_episode: Optional[int] = None,
+    ) -> None:
         """Render a top-down trajectory map for the current episode."""
 
-        if not self.current_episode_positions:
+        if positions_snapshot is None:
+            positions_snapshot = list(self.current_episode_positions)
+        if target_snapshot is None:
+            target_snapshot = self.current_target_xy
+        if current_episode is None:
+            current_episode = self.current_episode
+
+        if not positions_snapshot:
             return
 
-        positions = np.asarray(self.current_episode_positions, dtype=float)
+        positions = np.asarray(positions_snapshot, dtype=float)
         if positions.ndim != 2 or positions.shape[1] < 2:
             return
 
@@ -644,8 +679,8 @@ class MetricsTracker:
 
         extent_xs = xs
         extent_ys = ys
-        if self.current_target_xy is not None:
-            tx, ty = self.current_target_xy
+        if target_snapshot is not None:
+            tx, ty = target_snapshot
             extent_xs = np.append(extent_xs, tx)
             extent_ys = np.append(extent_ys, ty)
 
@@ -654,8 +689,8 @@ class MetricsTracker:
         ax.scatter(xs[0], ys[0], color="green", s=60, label="Start", zorder=3)
         ax.scatter(xs[-1], ys[-1], color="orange", s=60, label="Latest", zorder=3)
 
-        if self.current_target_xy is not None:
-            tx, ty = self.current_target_xy
+        if target_snapshot is not None:
+            tx, ty = target_snapshot
             ax.scatter(tx, ty, color="red", marker="*", s=140, label="Target", zorder=4)
 
         min_x, max_x = float(np.min(extent_xs)), float(np.max(extent_xs))
@@ -676,7 +711,7 @@ class MetricsTracker:
         ax.set_aspect("equal", adjustable="box")
         ax.set_xlabel("X (m)")
         ax.set_ylabel("Y (m)")
-        title_episode = self.current_episode if self.current_episode is not None else "latest"
+        title_episode = current_episode if current_episode is not None else "latest"
         ax.set_title(f"Vehicle Trajectory (Episode {title_episode})")
         ax.grid(True, alpha=0.3)
         ax.legend(loc="best")
@@ -684,8 +719,10 @@ class MetricsTracker:
         plt.tight_layout()
         plt.savefig(self.metrics_dir / "trajectory.png", dpi=100, bbox_inches="tight")
         try:
-            if self.current_episode is not None:
-                ep_path = self.metrics_dir / f"trajectory_ep{self.current_episode}.png"
+            if current_episode is not None:
+                episodes_dir = self.metrics_dir / "episodes"
+                episodes_dir.mkdir(parents=True, exist_ok=True)
+                ep_path = episodes_dir / f"trajectory_ep{current_episode}.png"
                 plt.savefig(ep_path, dpi=100, bbox_inches="tight")
         except Exception:
             pass
@@ -694,6 +731,8 @@ class MetricsTracker:
     def _save_metrics(self) -> None:
         """Save metrics data to JSON files."""
         try:
+            episodes_dir = self.metrics_dir / "episodes"
+            episodes_dir.mkdir(parents=True, exist_ok=True)
             # Save episode metrics
             episodes_data = []
             for ep in self.episode_metrics:
@@ -747,9 +786,7 @@ class MetricsTracker:
                         }
                     )
 
-                with open(
-                    self.metrics_dir / f"episode_{self.current_episode}_steps.json", "w"
-                ) as f:
+                with open(episodes_dir / f"episode_{self.current_episode}_steps.json", "w") as f:
                     json.dump(steps_data, f, indent=2)
 
                 if self.current_episode_positions and self.current_episode is not None:
@@ -765,9 +802,7 @@ class MetricsTracker:
                         else None,
                     }
 
-                    with open(
-                        self.metrics_dir / f"trajectory_ep{self.current_episode}.json", "w"
-                    ) as f:
+                    with open(episodes_dir / f"trajectory_ep{self.current_episode}.json", "w") as f:
                         json.dump(trajectory_payload, f, indent=2)
 
         except Exception as e:

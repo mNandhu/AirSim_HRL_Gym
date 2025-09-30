@@ -69,8 +69,9 @@ def test_metrics_tracker_end_to_end(tmp_path: Path, frozen_time) -> None:
 
     metrics_dir = tmp_path / "metrics"
     episodes_path = metrics_dir / "episodes.json"
-    steps_path = metrics_dir / "episode_2_steps.json"
-    trajectory_path = metrics_dir / "trajectory_ep1.json"
+    episodes_dir = metrics_dir / "episodes"
+    steps_path = episodes_dir / "episode_2_steps.json"
+    trajectory_path = episodes_dir / "trajectory_ep1.json"
     trajectory_plot = metrics_dir / "trajectory.png"
     assert episodes_path.exists()
     assert steps_path.exists()
