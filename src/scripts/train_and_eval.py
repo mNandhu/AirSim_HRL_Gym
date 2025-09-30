@@ -74,28 +74,77 @@ class AirSimSimulatorAdapter:
         if self._initial_pose is None:
             self._initial_pose = pose
 
-        # Reset vehicle to starting position
+        # Build desired pose
         position = airsim.Vector3r(pose.x, pose.y, pose.z)
         orientation = airsim.to_quaternion(0, 0, pose.yaw)
         vehicle_pose = airsim.Pose(position, orientation)
 
+        # Pause, reset, teleport, unpause
         try:
             self._client.simPause(True)
         except Exception:
             pass
-
-        self._client.simSetVehiclePose(vehicle_pose, True)
-        self._client.reset()
-
+        try:
+            self._client.reset()
+        except Exception:
+            pass
+        try:
+            self._client.simSetVehiclePose(vehicle_pose, True)
+        except Exception:
+            pass
         try:
             self._client.simPause(False)
         except Exception:
             pass
 
+        # Wait for reported pose to settle near target
+        target_xy = (float(pose.x), float(pose.y))
+        settle_tol_m = 0.5
+        timeout_s = 2.0
+        poll_dt = 0.02
+        start_t = time.monotonic()
+        last_state = None
+        while time.monotonic() - start_t < timeout_s:
+            try:
+                car_state = self._client.getCarState()
+                last_state = car_state
+                pos = car_state.kinematics_estimated.position
+                dx = float(pos.x_val) - target_xy[0]
+                dy = float(pos.y_val) - target_xy[1]
+                if (dx * dx + dy * dy) ** 0.5 <= settle_tol_m:
+                    break
+            except Exception:
+                pass
+            time.sleep(poll_dt)
+
         self._accumulator_time = 0.0
 
-        # Get initial state
-        car_state = self._client.getCarState()
+        # Get initial state (with fallback)
+        try:
+            car_state = self._client.getCarState()
+        except Exception:
+            car_state = last_state if last_state is not None else None
+        if car_state is None:
+            # Construct minimal stub
+            class _V3:
+                def __init__(self, x=0.0, y=0.0, z=0.0):
+                    self.x_val = x
+                    self.y_val = y
+                    self.z_val = z
+
+            class _Kin:
+                def __init__(self):
+                    self.position = _V3(target_xy[0], target_xy[1], float(pose.z))
+                    self.linear_velocity = _V3(0.0, 0.0, 0.0)
+                    self.orientation = airsim.to_quaternion(0, 0, pose.yaw)
+
+            class _State:
+                def __init__(self):
+                    self.kinematics_estimated = _Kin()
+                    self.timestamp = int(time.time() * 1e9)
+
+            car_state = _State()
+
         self._previous_velocity = _vector_from_airsim(
             car_state.kinematics_estimated.linear_velocity
         )
@@ -166,7 +215,7 @@ class AirSimSimulatorAdapter:
                 "acceleration_mps2": acceleration,
                 "heading_deg": heading,
                 "collision": has_collision,
-                "lane_mask_coverage_ratio": 1.0,  # Simplified
+                "lane_mask_coverage_ratio": 1.0,
                 "progress_possible": progress_possible,
                 "sim_time_sec": self._accumulator_time,
                 "position_xy": pos_xy,

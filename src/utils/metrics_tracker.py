@@ -265,6 +265,20 @@ class MetricsTracker:
 
         self.current_episode_positions.append(position)
 
+        # Defensive: if the very first recorded point is far from the second one,
+        # it's likely a stale pose from the previous episode captured right after reset.
+        # Drop the first point if the jump exceeds a generous threshold.
+        if len(self.current_episode_positions) == 2:
+            (x0, y0), (x1, y1) = (
+                self.current_episode_positions[0],
+                self.current_episode_positions[1],
+            )
+            dx = float(x1) - float(x0)
+            dy = float(y1) - float(y0)
+            if (dx * dx + dy * dy) ** 0.5 > 8.0:  # meters
+                # Remove the first (likely stale) sample
+                self.current_episode_positions.pop(0)
+
     def finish_episode(self, completed_successfully: bool = False) -> None:
         """Finish the current episode."""
         if self.current_episode is None:
