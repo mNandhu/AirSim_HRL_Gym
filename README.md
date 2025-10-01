@@ -143,6 +143,26 @@ Additional options:
 -   `--dummy`: Generate synthetic frames without AirSim to validate the visualization pipeline.
 -   `--max-frames N`: Capture a fixed number of frames before exiting.
 
+## Waypoint Creation Utility
+
+Create custom training paths by manually driving in AirSim and marking waypoints:
+
+```pwsh
+uv run python src/scripts/create_waypoints.py
+```
+
+**Workflow:**
+
+1. Start the script and connect to AirSim
+2. Drive manually to desired waypoint locations
+3. Press **ENTER** to capture each waypoint position
+4. Type **`end`** to capture the final goal
+5. Copy the YAML output into your experiment config
+
+The script automatically manages API control, enabling it only briefly to read position, then disabling it so you can drive freely.
+
+See `docs/waypoint-creator-utility.md` for detailed instructions and examples.
+
 ## Documentation
 
 Reward component behavior is described in `docs/reward-contract.md`. Update the document by invoking `utils.reward_doc.generate_reward_contract` after changing reward logic.
