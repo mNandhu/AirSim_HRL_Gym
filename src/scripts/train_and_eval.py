@@ -62,6 +62,8 @@ class AirSimSimulatorAdapter:
         self._previous_velocity = None
         self._previous_timestamp = None
         self._goal_pose = None
+        self._waypoints = None
+        self._current_waypoint_index = 0
         self._accumulator_time = 0.0
         self._enable_rgb = enable_rgb
 
@@ -69,6 +71,13 @@ class AirSimSimulatorAdapter:
         self._step = 0
         pose = experiment.start_pose
         self._goal_pose = experiment.goal_pose
+
+        # Support waypoint-based navigation
+        if hasattr(experiment, "waypoints") and experiment.waypoints:
+            self._waypoints = experiment.waypoints
+            self._current_waypoint_index = 0
+        else:
+            self._waypoints = None
 
         # Store initial pose for resets
         if self._initial_pose is None:
@@ -175,17 +184,41 @@ class AirSimSimulatorAdapter:
         collision_info = self._client.simGetCollisionInfo()
         has_collision = collision_info.has_collided
 
-        # Calculate distance to goal (if experiment provided)
-        distance_to_goal = 999.0
-        goal_pose = getattr(experiment, "goal_pose", None) or self._goal_pose
+        # Calculate distance to goal/waypoint
         position = car_state.kinematics_estimated.position
         pos_xy = (float(position.x_val), float(position.y_val))
+        distance_to_goal = 999.0
         goal_xy: tuple[float, float] | None = None
-        if goal_pose is not None:
-            goal_xy = (float(goal_pose.x), float(goal_pose.y))
-            distance_to_goal = math.sqrt(
-                (position.x_val - goal_pose.x) ** 2 + (position.y_val - goal_pose.y) ** 2
-            )
+
+        # Priority 1: Use waypoint-based navigation if available
+        if self._waypoints is not None and self._current_waypoint_index < len(self._waypoints):
+            # Update current waypoint if within threshold (5 meters)
+            current_waypoint = self._waypoints[self._current_waypoint_index]
+            wp_x, wp_y = float(current_waypoint.x), float(current_waypoint.y)
+            dist_to_current = math.sqrt((position.x_val - wp_x) ** 2 + (position.y_val - wp_y) ** 2)
+
+            # Advance to next waypoint if close enough (matching PathManager threshold)
+            if dist_to_current <= 5.0 and self._current_waypoint_index < len(self._waypoints) - 1:
+                self._current_waypoint_index += 1
+                current_waypoint = self._waypoints[self._current_waypoint_index]
+                wp_x, wp_y = float(current_waypoint.x), float(current_waypoint.y)
+                dist_to_current = math.sqrt(
+                    (position.x_val - wp_x) ** 2 + (position.y_val - wp_y) ** 2
+                )
+
+            distance_to_goal = dist_to_current
+            goal_xy = (wp_x, wp_y)
+
+        # Priority 2: Fall back to single goal_pose (legacy mode)
+        elif self._goal_pose is not None or (
+            experiment and hasattr(experiment, "goal_pose") and experiment.goal_pose
+        ):
+            goal_pose = getattr(experiment, "goal_pose", None) or self._goal_pose
+            if goal_pose is not None:
+                goal_xy = (float(goal_pose.x), float(goal_pose.y))
+                distance_to_goal = math.sqrt(
+                    (position.x_val - goal_pose.x) ** 2 + (position.y_val - goal_pose.y) ** 2
+                )
 
         velocity = _vector_from_airsim(car_state.kinematics_estimated.linear_velocity)
         speed = float(np.linalg.norm(velocity))

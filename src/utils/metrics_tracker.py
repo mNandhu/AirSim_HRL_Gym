@@ -102,7 +102,9 @@ class EpisodeMetrics:
     cumulative_reward: float
     max_speed: float = 0.0
     min_distance_to_goal: float = float("inf")
-    max_waypoints_reached: int = -1  # -1 = no waypoint data, 0+ = waypoint index
+    max_waypoints_reached: int = -1  # Count of waypoints COMPLETED (not index being targeted)
+    # -1 = no waypoint data, 0 = targeting first waypoint (none completed)
+    # N = completed N waypoints, targeting waypoint N+1
     completed_successfully: bool = False
     collision_occurred: bool = False
 
@@ -363,6 +365,8 @@ class MetricsTracker:
             for s in self.current_episode_steps
             if s.current_waypoint_index is not None
         ]
+        # Store the actual max index reached (0-based), not +1
+        # This represents the waypoint the agent is currently TARGETING, not reached
         max_waypoint_reached = (
             max(waypoint_indices) if waypoint_indices else -1
         )  # Use -1 to indicate "no waypoint data"
@@ -391,11 +395,22 @@ class MetricsTracker:
         duration = end_time - self.current_episode_start_time
         print(f"📊 Episode {self.current_episode} completed:")
         print(f"   Reward: {total_reward:.2f} | Steps: {total_steps} | Duration: {duration:.1f}s")
-        waypoint_info = (
-            f" | Waypoints: {max_waypoint_reached + 1}/{self.current_waypoints.__len__() if self.current_waypoints else '?'}"
-            if waypoint_indices
-            else ""
-        )
+
+        # Display waypoint progress accurately
+        # max_waypoint_reached is the INDEX being targeted (0-based)
+        # So if agent reached waypoint 0 and is now targeting waypoint 1, show "1 reached, targeting 2"
+        if waypoint_indices:
+            total_waypoints = self.current_waypoints.__len__() if self.current_waypoints else "?"
+            if max_waypoint_reached >= 0:
+                # If the agent is targeting waypoint N, it means waypoints 0..N-1 are complete
+                # and waypoint N is in progress
+                waypoints_completed = max_waypoint_reached  # 0-based index = count of completed
+                waypoint_info = f" | Waypoints: {waypoints_completed}/{total_waypoints} reached"
+            else:
+                waypoint_info = f" | Waypoints: 0/{total_waypoints} reached"
+        else:
+            waypoint_info = ""
+
         print(
             f"   Max Speed: {episode_metrics.max_speed:.1f} m/s | Min Distance: {episode_metrics.min_distance_to_goal:.1f}m{waypoint_info}"
         )
@@ -515,9 +530,11 @@ class MetricsTracker:
 
         # Waypoints reached OR Min distance to goal
         if has_waypoints:
+            # Display actual waypoints REACHED (completed), not currently targeting
+            # max_waypoints_reached is the index being targeted, so completed = index count
             waypoints_reached = [
-                e.max_waypoints_reached + 1 for e in episode_metrics_snapshot
-            ]  # +1 for human-readable
+                e.max_waypoints_reached for e in episode_metrics_snapshot
+            ]  # Already represents completed count
             ax4.bar(episodes, waypoints_reached, alpha=0.7, color="purple", edgecolor="darkviolet")
             ax4.set_xlabel("Episode")
             ax4.set_ylabel("Waypoints Reached")
