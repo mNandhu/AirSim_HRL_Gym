@@ -15,13 +15,14 @@ import numpy as np
 
 from config.experiment import ExperimentDefinition, SeedBundle
 from config.seeds import apply_seed_bundle
+from utils.path_manager import PathManager
 from utils.pid_controller import PIDController
 
 from .observation import ObservationPacket, assemble_observation
 from .reward import RewardCalculator, RewardConfig, VehicleState
 
-# Threshold for reaching the goal in meters
-_GOAL_THRESHOLD = 0.5
+# Threshold for reaching waypoints in meters
+_WAYPOINT_THRESHOLD = 5.0
 
 
 @dataclass
@@ -77,6 +78,9 @@ class AirSimEnv:
         self.speed_pid = PIDController(**speed_pid_kwargs)
         self.steering_pid = PIDController(**steering_pid_kwargs)
 
+        # Initialize path manager for waypoint-based navigation
+        self._path_manager = self._create_path_manager(experiment)
+
         self._step_index = 0
         self._last_observation: ObservationPacket | None = None
         self._command_context = _CommandContext()
@@ -85,6 +89,25 @@ class AirSimEnv:
             "brake": 0.0,
             "steering": 0.0,
         }
+
+    def _create_path_manager(self, experiment: ExperimentDefinition) -> PathManager:
+        """Create PathManager from experiment configuration.
+
+        Supports both legacy goal_pose and new waypoints configuration.
+        """
+        if experiment.waypoints is not None:
+            # New waypoint-based navigation
+            waypoints = [(wp.x, wp.y, wp.z) for wp in experiment.waypoints]
+            return PathManager(waypoints, waypoint_threshold=_WAYPOINT_THRESHOLD)
+        elif experiment.goal_pose is not None:
+            # Legacy: single goal - create simple two-waypoint path
+            waypoints = [
+                (experiment.start_pose.x, experiment.start_pose.y, experiment.start_pose.z),
+                (experiment.goal_pose.x, experiment.goal_pose.y, experiment.goal_pose.z),
+            ]
+            return PathManager(waypoints, waypoint_threshold=_WAYPOINT_THRESHOLD)
+        else:
+            raise ValueError("Experiment must have either waypoints or goal_pose")
 
     @property
     def experiment(self) -> ExperimentDefinition:
@@ -100,7 +123,24 @@ class AirSimEnv:
         self.steering_pid.reset()
         self._last_control_action = {"throttle": 0.0, "brake": 0.0, "steering": 0.0}
 
+        # Reset path manager to start of waypoint sequence
+        self._path_manager.reset()
+
         sim_state = self._simulator.reset(self._experiment)
+
+        # Add waypoint tracking metrics without changing distance_to_goal
+        telemetry = sim_state.get("telemetry", {})
+        current_position = telemetry.get("position_xy")
+        if current_position:
+            telemetry = dict(telemetry)  # Make mutable copy
+            telemetry["distance_to_current_waypoint"] = (
+                self._path_manager.get_distance_to_current_waypoint(current_position)
+            )
+            telemetry["current_waypoint_index"] = self._path_manager.current_waypoint_index
+            telemetry["total_waypoints"] = self._path_manager.total_waypoints
+            sim_state = dict(sim_state)  # Make mutable copy
+            sim_state["telemetry"] = telemetry
+
         observation = self._build_observation(
             sim_state,
             reward_components={
@@ -156,6 +196,28 @@ class AirSimEnv:
 
         sim_state = self._simulator.step(control_action)
         telemetry = sim_state.get("telemetry", {})
+
+        # Update path manager with current position and add waypoint tracking
+        current_position = telemetry.get("position_xy")
+        if current_position:
+            waypoint_reached = self._path_manager.update(current_position)
+            if waypoint_reached:
+                # Log waypoint advancement (optional, can be verbose)
+                pass
+
+            # Add new metrics for waypoint navigation without breaking distance_to_goal
+            # distance_to_goal: Remains as distance to FINAL goal (for consistency)
+            # distance_to_current_waypoint: New metric for waypoint-following progress
+            # current_waypoint_index: Which waypoint we're targeting
+            telemetry = dict(telemetry)  # Make mutable copy
+            telemetry["distance_to_current_waypoint"] = (
+                self._path_manager.get_distance_to_current_waypoint(current_position)
+            )
+            telemetry["current_waypoint_index"] = self._path_manager.current_waypoint_index
+            telemetry["total_waypoints"] = self._path_manager.total_waypoints
+            sim_state = dict(sim_state)  # Make mutable copy
+            sim_state["telemetry"] = telemetry
+
         progress_possible = bool(telemetry.get("progress_possible", True))
         reward_components, reward = self.compute_reward(
             prev_telemetry, telemetry, progress_possible=progress_possible
@@ -262,10 +324,11 @@ class AirSimEnv:
         )
 
     def _check_terminated(self, telemetry: Mapping[str, Any]) -> bool:
+        """Check if episode should terminate (collision or all waypoints reached)."""
         if telemetry.get("collision", False):
             return True
-        distance = float(telemetry.get("distance_to_goal", _GOAL_THRESHOLD + 1))
-        return distance <= _GOAL_THRESHOLD
+        # Episode completes when all waypoints are reached
+        return self._path_manager.all_waypoints_reached
 
     def _check_truncated(self) -> bool:
         return self._step_index + 1 >= self._experiment.horizon
@@ -278,7 +341,14 @@ class AirSimEnv:
     ) -> VehicleState:
         speed = float(telemetry.get("speed_mps", 0.0))
         collision = bool(telemetry.get("collision", False))
-        distance_to_goal = float(telemetry.get("distance_to_goal", 0.0))
+
+        # Get current position for waypoint calculation
+        current_position = telemetry.get("position_xy")
+        if current_position:
+            # Distance to current target waypoint (not final goal)
+            distance_to_goal = self._path_manager.get_distance_to_current_waypoint(current_position)
+        else:
+            distance_to_goal = float(telemetry.get("distance_to_goal", 0.0))
 
         if "lane_deviation_m" in telemetry:
             lane_deviation = float(telemetry.get("lane_deviation_m", 0.0))
@@ -292,19 +362,27 @@ class AirSimEnv:
             [math.cos(heading_rad), math.sin(heading_rad), 0.0], dtype=np.float32
         )
 
-        vector_to_goal = telemetry.get("vector_to_goal")
-        if vector_to_goal is None and previous is not None:
-            vector_to_goal = previous.get("vector_to_goal")
-        if vector_to_goal is not None:
-            goal_vector = np.asarray(vector_to_goal, dtype=np.float32)
+        # CRITICAL FIX: vector_to_next_waypoint now points to current path waypoint,
+        # not the distant final goal. This aligns progress_velocity reward with
+        # following the road, resolving the contradictory reward signals.
+        if current_position:
+            vector_to_waypoint = self._path_manager.get_vector_to_current_waypoint(
+                current_position, normalize=True
+            )
         else:
-            goal_vector = forward_vector.copy()
-
-        norm = float(np.linalg.norm(goal_vector))
-        if norm > 1e-6:
-            goal_vector = goal_vector / norm
-        else:
-            goal_vector = forward_vector.copy()
+            # Fallback: use telemetry or forward vector
+            vector_to_goal = telemetry.get("vector_to_goal")
+            if vector_to_goal is None and previous is not None:
+                vector_to_goal = previous.get("vector_to_goal")
+            if vector_to_goal is not None:
+                vector_to_waypoint = np.asarray(vector_to_goal, dtype=np.float32)
+                norm = float(np.linalg.norm(vector_to_waypoint))
+                if norm > 1e-6:
+                    vector_to_waypoint = vector_to_waypoint / norm
+                else:
+                    vector_to_waypoint = forward_vector.copy()
+            else:
+                vector_to_waypoint = forward_vector.copy()
 
         return VehicleState(
             speed_mps=speed,
@@ -312,7 +390,7 @@ class AirSimEnv:
             distance_to_goal=distance_to_goal,
             distance_from_lane_center=lane_deviation,
             forward_vector=forward_vector,
-            vector_to_next_waypoint=goal_vector,
+            vector_to_next_waypoint=vector_to_waypoint,
         )
 
 

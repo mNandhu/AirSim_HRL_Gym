@@ -48,7 +48,8 @@ class ExperimentDefinition(BaseModel):
     scene: str
     vehicle: str
     start_pose: Pose
-    goal_pose: Pose
+    goal_pose: Optional[Pose] = None  # Deprecated: use waypoints instead
+    waypoints: Optional[list[Pose]] = None  # Preferred: ordered path waypoints
     horizon: int = Field(..., gt=0)
     seeds: SeedBundle
     weather_profile: Optional[str] = None
@@ -72,6 +73,13 @@ class ExperimentDefinition(BaseModel):
             raise ValueError("config_hash must be a 64-character SHA256 hex digest")
         int(value, 16)
         return value
+
+    def model_post_init(self, __context) -> None:
+        """Validate that either goal_pose or waypoints is provided."""
+        if self.goal_pose is None and self.waypoints is None:
+            raise ValueError("Either goal_pose or waypoints must be provided")
+        if self.waypoints is not None and len(self.waypoints) < 2:
+            raise ValueError("Waypoints list must contain at least 2 waypoints")
 
 
 __all__ = ["Pose", "SeedBundle", "ExperimentDefinition", "ValidationError"]

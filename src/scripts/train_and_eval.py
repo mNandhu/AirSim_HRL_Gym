@@ -521,8 +521,9 @@ def train_mode(args) -> int:
         for episode in range(args.episodes):
             print(f"\n=== Episode {episode + 1}/{args.episodes} ===")
 
-            # Start tracking this episode
-            metrics_tracker.start_episode(episode + 1)
+            # Start tracking this episode with waypoints
+            waypoints = _extract_waypoints_from_experiment(experiment)
+            metrics_tracker.start_episode(episode + 1, waypoints=waypoints)
 
             start_time = time.time()
             result = orchestrator.run_episode(
@@ -869,6 +870,24 @@ def _compute_heading_deg(orientation) -> float:
     except Exception:
         yaw = 0.0
     return math.degrees(yaw)
+
+
+def _extract_waypoints_from_experiment(experiment) -> list[tuple[float, float]]:
+    """Extract waypoints from experiment config for trajectory plotting."""
+    waypoints = []
+    try:
+        if hasattr(experiment, "waypoints") and experiment.waypoints:
+            # Convert waypoint poses to (x, y) tuples
+            waypoints = [(float(wp.x), float(wp.y)) for wp in experiment.waypoints]
+        elif hasattr(experiment, "goal_pose") and experiment.goal_pose:
+            # Legacy: create path from start to goal
+            start = experiment.start_pose
+            goal = experiment.goal_pose
+            waypoints = [(float(start.x), float(start.y)), (float(goal.x), float(goal.y))]
+    except Exception:
+        # If waypoint extraction fails, return empty list
+        pass
+    return waypoints
 
 
 def _log_evaluation_episode(

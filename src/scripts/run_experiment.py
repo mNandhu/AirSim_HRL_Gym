@@ -51,7 +51,17 @@ class AirSimSimulatorAdapter:
                 self._client.simSetVehiclePose(airsim.Pose(position, orientation), True)
             except Exception:
                 pass
-        goal_xy = (float(experiment.goal_pose.x), float(experiment.goal_pose.y))
+
+        # Support both waypoints and legacy goal_pose
+        if experiment.waypoints:
+            # Use last waypoint as final goal for telemetry
+            final_waypoint = experiment.waypoints[-1]
+            goal_xy = (float(final_waypoint.x), float(final_waypoint.y))
+        elif experiment.goal_pose:
+            goal_xy = (float(experiment.goal_pose.x), float(experiment.goal_pose.y))
+        else:
+            goal_xy = (float(pose.x), float(pose.y))
+
         return _state_dict(
             self._distance,
             0.0,

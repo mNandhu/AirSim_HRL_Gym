@@ -85,6 +85,11 @@ class StepMetrics:
     position_xy: Optional[Tuple[float, float]] = None
     goal_xy: Optional[Tuple[float, float]] = None
 
+    # Waypoint navigation metrics
+    distance_to_current_waypoint: Optional[float] = None
+    current_waypoint_index: Optional[int] = None
+    total_waypoints: Optional[int] = None
+
 
 @dataclass
 class EpisodeMetrics:
@@ -142,12 +147,20 @@ class MetricsTracker:
         # Position tracking for trajectory plotting
         self.current_episode_positions: List[Tuple[float, float]] = []
         self.current_target_xy: Optional[Tuple[float, float]] = None
+        self.current_waypoints: List[Tuple[float, float]] = []  # Track all waypoints for plotting
 
         # Plotting setup
         plt.ioff()  # Turn off interactive mode for better performance
 
-    def start_episode(self, episode: int) -> None:
-        """Start tracking a new episode."""
+    def start_episode(
+        self, episode: int, waypoints: Optional[List[Tuple[float, float]]] = None
+    ) -> None:
+        """Start tracking a new episode.
+
+        Args:
+            episode: Episode number
+            waypoints: Optional list of (x, y) waypoints defining the path
+        """
         # Finish previous episode if exists
         if self.current_episode is not None:
             self._finish_episode()
@@ -157,7 +170,10 @@ class MetricsTracker:
         self.current_episode_steps = []
         self.current_episode_positions = []
         self.current_target_xy = None
+        self.current_waypoints = waypoints if waypoints is not None else []
         print(f"📊 Started tracking episode {episode}")
+        if waypoints:
+            print(f"   Path: {len(waypoints)} waypoints")
 
     def log_step(
         self,
@@ -182,6 +198,11 @@ class MetricsTracker:
         collision = telemetry.get("collision", False)
         position_xy = _normalize_xy(telemetry.get("position_xy"))
         goal_xy = _normalize_xy(telemetry.get("goal_xy"))
+
+        # Extract waypoint navigation data
+        distance_to_current_waypoint = telemetry.get("distance_to_current_waypoint")
+        current_waypoint_index = telemetry.get("current_waypoint_index")
+        total_waypoints = telemetry.get("total_waypoints")
 
         next_position_xy: Optional[Tuple[float, float]] = None
         next_goal_xy: Optional[Tuple[float, float]] = None
@@ -219,6 +240,9 @@ class MetricsTracker:
             time_penalty=reward_components.get("time_penalty", 0.0),
             position_xy=position_xy,
             goal_xy=goal_xy,
+            distance_to_current_waypoint=distance_to_current_waypoint,
+            current_waypoint_index=current_waypoint_index,
+            total_waypoints=total_waypoints,
         )
 
         self.current_episode_steps.append(step_metrics)
@@ -370,6 +394,7 @@ class MetricsTracker:
         current_episode = self.current_episode
         positions_snapshot = list(self.current_episode_positions)
         target_snapshot = self.current_target_xy
+        waypoints_snapshot = list(self.current_waypoints)
 
         try:
             with self._plot_lock:
@@ -377,7 +402,9 @@ class MetricsTracker:
                 self._plot_episode_summary(episode_metrics_snapshot)
                 self._plot_action_analysis(steps_snapshot, current_episode, episodes_dir)
                 self._plot_performance_metrics(steps_snapshot, current_episode, episodes_dir)
-                self._plot_trajectory_map(positions_snapshot, target_snapshot, current_episode)
+                self._plot_trajectory_map(
+                    positions_snapshot, target_snapshot, waypoints_snapshot, current_episode
+                )
         except Exception as e:
             print(f"⚠️  Warning: Failed to update graphs: {e}")
 
@@ -553,11 +580,25 @@ class MetricsTracker:
         current_episode: Optional[int],
         episodes_dir: Path,
     ) -> None:
-        """Plot performance metrics like speed and distance."""
+        """Plot performance metrics like speed, distance, and waypoint progress."""
         if not steps_snapshot:
             return
 
-        fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 10))
+        # Check if we have waypoint data
+        has_waypoints = any(
+            hasattr(s, "distance_to_current_waypoint")
+            and s.distance_to_current_waypoint is not None
+            for s in steps_snapshot
+        )
+
+        if has_waypoints:
+            fig, axes = plt.subplots(4, 1, figsize=(12, 14))
+            ax1, ax2, ax3, ax4 = axes
+        else:
+            fig, axes = plt.subplots(3, 1, figsize=(12, 10))
+            ax1, ax2, ax3 = axes
+            ax4 = None
+
         fig.suptitle(
             f"Performance Metrics (Episode {current_episode})", fontsize=16, fontweight="bold"
         )
@@ -581,22 +622,64 @@ class MetricsTracker:
         ax1.grid(True, alpha=0.3)
         ax1.legend()
 
-        # Distance to goal
+        # Distance to final goal (unchanged - always shows distance to final destination)
         ax2.plot(steps, distances, "orange", linewidth=2, label="Distance to Goal")
         ax2.set_ylabel("Distance (m)")
         ax2.set_title("Distance to Goal")
         ax2.grid(True, alpha=0.3)
         ax2.legend()
 
+        # Waypoint progress (new - shows distance to current waypoint)
+        if has_waypoints:
+            waypoint_distances = [
+                getattr(s, "distance_to_current_waypoint", 0.0) for s in steps_snapshot
+            ]
+            waypoint_indices = [getattr(s, "current_waypoint_index", 0) for s in steps_snapshot]
+
+            # Plot distance to current waypoint
+            ax3.plot(
+                steps, waypoint_distances, "blue", linewidth=2, label="Distance to Current Waypoint"
+            )
+            ax3.set_ylabel("Distance (m)")
+            ax3.set_title("Waypoint Progress")
+            ax3.grid(True, alpha=0.3)
+
+            # Add waypoint index changes as vertical lines
+            prev_idx = waypoint_indices[0] if waypoint_indices else 0
+            for i, idx in enumerate(waypoint_indices):
+                if idx != prev_idx:
+                    ax3.axvline(x=steps[i], color="green", linestyle="--", alpha=0.5, linewidth=1)
+                    ax3.text(
+                        steps[i],
+                        max(waypoint_distances) * 0.9,
+                        f"WP{idx}",
+                        rotation=90,
+                        verticalalignment="top",
+                        fontsize=8,
+                    )
+                    prev_idx = idx
+
+            ax3.legend()
+
+            # Reward components on ax4
+            reward_ax = ax4
+        else:
+            # Reward components on ax3 (no waypoint data)
+            reward_ax = ax3
+
+        # Ensure reward_ax is not None
+        if reward_ax is None:
+            raise ValueError("reward_ax should not be None")
+
         # Reward components stacked
-        ax3.fill_between(
+        reward_ax.fill_between(
             steps, 0, command_shaping, alpha=0.7, label="Command Shaping", color="green"
         )
 
         collision_base = [
             cs + cp for cs, cp in zip(command_shaping, collision_penalties, strict=False)
         ]
-        ax3.fill_between(
+        reward_ax.fill_between(
             steps,
             command_shaping,
             collision_base,
@@ -611,7 +694,7 @@ class MetricsTracker:
                 command_shaping, collision_penalties, completion_bonuses, strict=False
             )
         ]
-        ax3.fill_between(
+        reward_ax.fill_between(
             steps,
             collision_base,
             completion_base,
@@ -630,7 +713,7 @@ class MetricsTracker:
                 strict=False,
             )
         ]
-        ax3.fill_between(
+        reward_ax.fill_between(
             steps, completion_base, idle_base, alpha=0.7, label="Idle Penalty", color="gray"
         )
 
@@ -645,15 +728,15 @@ class MetricsTracker:
                 strict=False,
             )
         ]
-        ax3.fill_between(
+        reward_ax.fill_between(
             steps, idle_base, time_base, alpha=0.7, label="Time Penalty", color="black"
         )
 
-        ax3.set_xlabel("Step")
-        ax3.set_ylabel("Reward Component")
-        ax3.set_title("Reward Component Breakdown")
-        ax3.legend(loc="upper right")
-        ax3.grid(True, alpha=0.3)
+        reward_ax.set_xlabel("Step")
+        reward_ax.set_ylabel("Reward Component")
+        reward_ax.set_title("Reward Component Breakdown")
+        reward_ax.legend(loc="upper right")
+        reward_ax.grid(True, alpha=0.3)
 
         plt.tight_layout()
         # Save latest and per-episode variants
@@ -670,6 +753,7 @@ class MetricsTracker:
         self,
         positions_snapshot: Optional[list[tuple[float, float]]] = None,
         target_snapshot: Optional[tuple[float, float]] = None,
+        waypoints_snapshot: Optional[list[tuple[float, float]]] = None,
         current_episode: Optional[int] = None,
     ) -> None:
         """Render a top-down trajectory map for the current episode."""
@@ -678,6 +762,8 @@ class MetricsTracker:
             positions_snapshot = list(self.current_episode_positions)
         if target_snapshot is None:
             target_snapshot = self.current_target_xy
+        if waypoints_snapshot is None:
+            waypoints_snapshot = list(self.current_waypoints)
         if current_episode is None:
             current_episode = self.current_episode
 
@@ -698,12 +784,53 @@ class MetricsTracker:
             extent_xs = np.append(extent_xs, tx)
             extent_ys = np.append(extent_ys, ty)
 
+        # Include waypoints in extent calculation
+        if waypoints_snapshot:
+            waypoints_arr = np.asarray(waypoints_snapshot, dtype=float)
+            if waypoints_arr.ndim == 2 and waypoints_arr.shape[1] >= 2:
+                extent_xs = np.append(extent_xs, waypoints_arr[:, 0])
+                extent_ys = np.append(extent_ys, waypoints_arr[:, 1])
+
         fig, ax = plt.subplots(figsize=(8, 8))
         ax.plot(xs, ys, color="navy", linewidth=2, label="Trajectory")
         ax.scatter(xs[0], ys[0], color="green", s=60, label="Start", zorder=3)
         ax.scatter(xs[-1], ys[-1], color="orange", s=60, label="Latest", zorder=3)
 
-        if target_snapshot is not None:
+        # Plot waypoints as path markers
+        if waypoints_snapshot:
+            waypoints_arr = np.asarray(waypoints_snapshot, dtype=float)
+            if waypoints_arr.ndim == 2 and waypoints_arr.shape[1] >= 2:
+                wp_xs = waypoints_arr[:, 0]
+                wp_ys = waypoints_arr[:, 1]
+                # Connect waypoints with dashed line
+                ax.plot(wp_xs, wp_ys, "r--", alpha=0.5, linewidth=1, label="Path", zorder=1)
+                # Mark waypoints as red circles
+                ax.scatter(
+                    wp_xs,
+                    wp_ys,
+                    color="red",
+                    marker="o",
+                    s=80,
+                    edgecolors="darkred",
+                    linewidths=2,
+                    label="Waypoints",
+                    zorder=2,
+                )
+                # Mark final waypoint with star
+                ax.scatter(
+                    wp_xs[-1],
+                    wp_ys[-1],
+                    color="red",
+                    marker="*",
+                    s=200,
+                    edgecolors="darkred",
+                    linewidths=2,
+                    label="Goal",
+                    zorder=4,
+                )
+
+        if target_snapshot is not None and not waypoints_snapshot:
+            # Only show single target if no waypoints (legacy behavior)
             tx, ty = target_snapshot
             ax.scatter(tx, ty, color="red", marker="*", s=140, label="Target", zorder=4)
 

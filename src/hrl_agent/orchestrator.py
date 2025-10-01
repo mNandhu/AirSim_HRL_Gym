@@ -24,6 +24,24 @@ class HRLOrchestrator:
         self._env = env
         self._coordinator = coordinator
 
+    def _extract_waypoints_from_env(self, env: AirSimEnv) -> list[tuple[float, float]]:
+        """Extract waypoints from environment experiment config for trajectory plotting."""
+        waypoints = []
+        try:
+            experiment = env.experiment
+            if hasattr(experiment, "waypoints") and experiment.waypoints:
+                # Convert waypoint poses to (x, y) tuples
+                waypoints = [(float(wp.x), float(wp.y)) for wp in experiment.waypoints]
+            elif hasattr(experiment, "goal_pose") and experiment.goal_pose:
+                # Legacy: create path from start to goal
+                start = experiment.start_pose
+                goal = experiment.goal_pose
+                waypoints = [(float(start.x), float(start.y)), (float(goal.x), float(goal.y))]
+        except Exception:
+            # If waypoint extraction fails, return empty list
+            pass
+        return waypoints
+
     def run_episode(
         self,
         *,
@@ -115,7 +133,8 @@ class HRLOrchestrator:
             step_counts[env_id] = 0
             results[env_id] = EpisodeResult(cumulative_reward=0.0, steps=0, info={})
             if metrics_tracker is not None and hasattr(metrics_tracker, "start_episode"):
-                metrics_tracker.start_episode(index)
+                waypoints = self._extract_waypoints_from_env(env)
+                metrics_tracker.start_episode(episode=index, waypoints=waypoints)
 
         while active_envs:
             commands: dict[str, tuple[str, Any]] = {}

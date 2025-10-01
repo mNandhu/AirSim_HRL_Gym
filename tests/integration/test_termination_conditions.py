@@ -38,29 +38,58 @@ class CollisionSimulator:
 
 
 class GoalSimulator:
+    """Simulator that starts near goal and moves to reach it."""
+
+    def __init__(self):
+        self._step_count = 0
+
     def reset(self, experiment):
+        self._step_count = 0
+        # For legacy goal_pose, PathManager creates path: [start_pose, goal_pose]
+        # Start at start_pose (0, 0), which will be first waypoint
         return {
             "telemetry": {
-                "distance_to_goal": 0.4,
+                "distance_to_goal": 10.0,
                 "speed_mps": 0.0,
                 "collision": False,
                 "lane_mask_coverage_ratio": 1.0,
                 "progress_possible": True,
+                "position_xy": (0.0, 0.0),  # At start waypoint
             },
             "image": None,
         }
 
     def step(self, action):
-        return {
-            "telemetry": {
-                "distance_to_goal": 0.2,
-                "speed_mps": action.get("throttle", 0.0),
-                "collision": False,
-                "lane_mask_coverage_ratio": 1.0,
-                "progress_possible": True,
-            },
-            "image": None,
-        }
+        self._step_count += 1
+        if self._step_count == 1:
+            # First step: move past first waypoint (start) to advance to second waypoint (goal)
+            return {
+                "telemetry": {
+                    "distance_to_goal": 5.0,
+                    "speed_mps": 1.0,
+                    "collision": False,
+                    "lane_mask_coverage_ratio": 1.0,
+                    "progress_possible": True,
+                    "position_xy": (
+                        3.0,
+                        0.0,
+                    ),  # Within threshold of start (0,0), will advance to goal waypoint
+                },
+                "image": None,
+            }
+        else:
+            # Second step: reach goal waypoint at (10, 0)
+            return {
+                "telemetry": {
+                    "distance_to_goal": 0.5,
+                    "speed_mps": 1.0,
+                    "collision": False,
+                    "lane_mask_coverage_ratio": 1.0,
+                    "progress_possible": True,
+                    "position_xy": (9.5, 0.0),  # Within threshold of goal (10, 0)
+                },
+                "image": None,
+            }
 
 
 class NoOpPerception:
@@ -96,6 +125,7 @@ def test_collision_terminates_episode(experiment):
 
 
 def test_goal_distance_triggers_termination(experiment):
+    """Test that reaching the final waypoint terminates the episode."""
     env = AirSimEnv(
         experiment,
         simulator=GoalSimulator(),
@@ -103,6 +133,12 @@ def test_goal_distance_triggers_termination(experiment):
         reward_calculator=RewardCalculator(),
     )
     env.reset()
-    _, _, terminated, truncated, info = env.step({"target_speed": 0.0, "target_steering": 0.0})
-    assert terminated is True
-    assert info["episode_step"] == 1
+
+    # First step: advance past start waypoint
+    _, _, terminated, truncated, info = env.step({"target_speed": 1.0, "target_steering": 0.0})
+    assert not terminated, "Should not terminate after first step"
+
+    # Second step: reach goal waypoint
+    _, _, terminated, truncated, info = env.step({"target_speed": 1.0, "target_steering": 0.0})
+    assert terminated is True, "Should terminate when final waypoint is reached"
+    assert info["episode_step"] == 2

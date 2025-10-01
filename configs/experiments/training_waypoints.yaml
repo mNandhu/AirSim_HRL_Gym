@@ -1,0 +1,50 @@
+# Waypoint-based training configuration for HRL AirSim
+# This configuration uses path-following instead of single-goal navigation,
+# resolving the reward conflict where agents were punished for following
+# curved roads while trying to reach a distant straight-line goal.
+
+scene: Neighbourhood
+vehicle: DefaultSedan
+
+start_pose:
+    x: 0.0
+    y: 0.0
+    z: -2.0
+    yaw: 0.0
+
+# Waypoint-based path (replaces single goal_pose)
+# Agent receives rewards for progressing to the next waypoint on the path,
+# not for moving towards a distant final goal. This aligns progress_velocity
+# reward with FOLLOW_LANE command shaping.
+waypoints:
+    - x: 10.0
+      y: 0.0
+      z: -2.0
+      yaw: 0.0
+    - x: 20.0
+      y: 0.0
+      z: -2.0
+      yaw: 0.0
+    - x: 30.0
+      y: 5.0
+      z: -2.0
+      yaw: 15.0
+    - x: 40.0
+      y: 15.0
+      z: -2.0
+      yaw: 30.0
+    - x: 50.0
+      y: 25.0
+      z: -2.0
+      yaw: 0.0
+
+horizon: 1000
+
+seeds:
+    python: 123
+    numpy: 124
+    torch: 125
+    airsim: 126
+    deterministic: true
+
+weather_profile: null
