@@ -36,16 +36,20 @@ class VehicleState:
 class RewardConfig:
     """Configuration parameters for reward shaping components."""
 
-    # --- Major Penalties (Dominant) ---
-    collision_penalty: float = 200.0  # Large penalty to strongly discourage collisions.
+    # --- Major Penalties (Reduced to not dominate episode) ---
+    collision_penalty: float = 50.0  # Penalty for collision (was 200.0, reduced to allow learning)
 
     # --- Goal & Task Bonuses (Sparse) ---
     completion_bonus: float = 100.0  # Large bonus for successfully completing a high-level command.
 
     # --- Dense Shaping Coefficients (Per-step guidance) ---
-    # Amplified to provide stronger immediate incentives for moving toward the goal
-    progress_velocity_coef: float = 1.2  # Rewards velocity in the correct direction.
-    lane_deviation_penalty_coef: float = 2.0  # Penalizes deviation from the lane center (squared).
+    # Increased to provide stronger rewards for good navigation behavior
+    progress_velocity_coef: float = (
+        2.0  # Rewards velocity in the correct direction (was 1.2, +67% boost)
+    )
+    lane_deviation_penalty_coef: float = (
+        1.0  # Penalizes deviation from lane center (was 2.0, -50% to allow path-following)
+    )
     # Amplified to encourage decisive turning toward the waypoint
     heading_alignment_coef: float = 1.0  # Rewards aligning with the path during turns.
     idle_penalty_coef: float = 0.5  # Small penalty for being stationary when progress is possible.
@@ -54,8 +58,8 @@ class RewardConfig:
     idle_threshold_mps: float = 0.1  # Speed below which the idle penalty applies.
 
     # --- Efficiency penalty (Per-step) ---
-    # Small, negative value applied each timestep to incentivize finishing quickly
-    time_penalty: float = -0.02
+    # Reduced to minimize constant drain and allow more exploration
+    time_penalty: float = -0.005  # Per-step penalty (was -0.02, reduced by 75%)
 
 
 class RewardCalculator:

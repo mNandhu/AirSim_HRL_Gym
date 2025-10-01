@@ -29,6 +29,8 @@ class CoordinatorState:
     # Completion management
     completion_awarded: bool = False
     stop_below_threshold_steps: int = 0
+    # Command persistence tracking
+    steps_in_current_command: int = 0
 
 
 class CommandCoordinator:
@@ -38,6 +40,8 @@ class CommandCoordinator:
         self,
         manager: DQNManager,
         workers: Mapping[str, SACWorker],
+        *,
+        min_command_duration: int = 10,
     ) -> None:
         if not workers:
             raise ValueError("At least one worker must be provided")
@@ -47,6 +51,7 @@ class CommandCoordinator:
         self._per_env_state: dict[str, CoordinatorState] = {}
         self._schedule = list(self._workers.keys())
         self._schedule_index = 0
+        self._min_command_duration = min_command_duration  # Minimum steps before command can change
 
     @property
     def state(self) -> CoordinatorState:
@@ -72,9 +77,22 @@ class CommandCoordinator:
         self, env_id: str, observation: Any, *, deterministic: bool = True
     ) -> tuple[str, Mapping[str, float]]:
         features = self._vectorize_observation(observation)
+        prev = self._per_env_state.get(env_id)
 
-        command_input = self._adapt_features(features, self._manager_input_dim())
-        command = self._manager.select_command(command_input, deterministic=deterministic)
+        # Command persistence: only query manager if minimum duration elapsed or no previous command
+        if prev is None or prev.steps_in_current_command >= self._min_command_duration:
+            # Allow command selection/change
+            command_input = self._adapt_features(features, self._manager_input_dim())
+            command = self._manager.select_command(command_input, deterministic=deterministic)
+        else:
+            # Keep current command, increment step counter
+            command = prev.command if prev.command is not None else "FOLLOW_LANE"
+            command_input = (
+                prev.manager_features
+                if prev.manager_features is not None
+                else self._adapt_features(features, self._manager_input_dim())
+            )
+
         worker = self._workers.get(command)
         if worker is None:
             worker = next(iter(self._workers.values()))
@@ -85,7 +103,6 @@ class CommandCoordinator:
         start_distance = telemetry.get("distance_to_goal")
         heading = telemetry.get("heading_deg")
 
-        prev = self._per_env_state.get(env_id)
         # If command changes, re-arm completion and establish new baselines
         if prev is None or prev.command != command:
             state = CoordinatorState(
@@ -99,6 +116,7 @@ class CommandCoordinator:
                 command_start_heading=float(heading) if heading is not None else None,
                 completion_awarded=False,
                 stop_below_threshold_steps=0,
+                steps_in_current_command=0,  # Reset counter on command change
             )
         else:
             # Preserve baselines and completion state across steps for same command
@@ -111,6 +129,7 @@ class CommandCoordinator:
                 command_start_heading=prev.command_start_heading,
                 completion_awarded=prev.completion_awarded,
                 stop_below_threshold_steps=prev.stop_below_threshold_steps,
+                steps_in_current_command=prev.steps_in_current_command + 1,  # Increment counter
             )
         self._per_env_state[env_id] = state
         if env_id == DEFAULT_ENVIRONMENT_ID:

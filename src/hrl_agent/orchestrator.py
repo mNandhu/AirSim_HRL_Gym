@@ -63,34 +63,40 @@ class HRLOrchestrator:
 
             # Log metrics if tracker is provided
             if metrics_tracker is not None:
-                # Extract telemetry and reward components from observation
+                # CRITICAL FIX: Use next_observation for reward_components and telemetry
+                # The reward returned from step() corresponds to the transition TO next_observation,
+                # not from the previous observation. Logging old observation components with new
+                # reward creates mismatches (e.g., collision penalty in reward but not in components).
                 telemetry = {}
                 reward_components = {}
 
-                if hasattr(observation, "telemetry"):
-                    telemetry = observation.telemetry
-                elif isinstance(observation, dict) and "telemetry" in observation:
-                    telemetry = observation["telemetry"]
-
-                if hasattr(observation, "reward_components"):
-                    reward_components = observation.reward_components
-                elif isinstance(observation, dict) and "reward_components" in observation:
-                    reward_components = observation["reward_components"]
-
-                next_telemetry = None
+                # Use NEXT observation (current state after step) for telemetry
                 if hasattr(next_observation, "telemetry"):
-                    next_telemetry = next_observation.telemetry
+                    telemetry = next_observation.telemetry
                 elif isinstance(next_observation, dict) and "telemetry" in next_observation:
-                    next_telemetry = next_observation["telemetry"]
+                    telemetry = next_observation["telemetry"]
+
+                # Use NEXT observation (current state after step) for reward components
+                if hasattr(next_observation, "reward_components"):
+                    reward_components = next_observation.reward_components
+                elif isinstance(next_observation, dict) and "reward_components" in next_observation:
+                    reward_components = next_observation["reward_components"]
+
+                # Keep previous telemetry for backwards compatibility in metrics tracker
+                prev_telemetry = None
+                if hasattr(observation, "telemetry"):
+                    prev_telemetry = observation.telemetry
+                elif isinstance(observation, dict) and "telemetry" in observation:
+                    prev_telemetry = observation["telemetry"]
 
                 metrics_tracker.log_step(
                     step=steps,
                     reward=reward,
                     action=action,
-                    telemetry=telemetry,
-                    reward_components=reward_components,
+                    telemetry=telemetry,  # Now uses NEXT observation (matches reward)
+                    reward_components=reward_components,  # Now uses NEXT observation (matches reward)
                     command=command,
-                    next_telemetry=next_telemetry,
+                    next_telemetry=prev_telemetry,  # Optional: previous state for delta calculations
                 )
 
             if not deterministic:
