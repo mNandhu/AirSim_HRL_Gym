@@ -102,8 +102,9 @@ class EpisodeMetrics:
     cumulative_reward: float
     max_speed: float = 0.0
     min_distance_to_goal: float = float("inf")
-    collision_occurred: bool = False
+    max_waypoints_reached: int = -1  # -1 = no waypoint data, 0+ = waypoint index
     completed_successfully: bool = False
+    collision_occurred: bool = False
 
     # Action statistics
     avg_target_speed: float = 0.0
@@ -356,6 +357,16 @@ class MetricsTracker:
         distances = [s.distance_to_goal for s in self.current_episode_steps]
         collision_occurred = any(s.collision for s in self.current_episode_steps)
 
+        # Track max waypoint index reached
+        waypoint_indices = [
+            s.current_waypoint_index
+            for s in self.current_episode_steps
+            if s.current_waypoint_index is not None
+        ]
+        max_waypoint_reached = (
+            max(waypoint_indices) if waypoint_indices else -1
+        )  # Use -1 to indicate "no waypoint data"
+
         episode_metrics = EpisodeMetrics(
             episode=self.current_episode,
             start_time=self.current_episode_start_time,
@@ -364,6 +375,7 @@ class MetricsTracker:
             cumulative_reward=total_reward,
             max_speed=max(speeds) if speeds else 0.0,
             min_distance_to_goal=min(distances) if distances else float("inf"),
+            max_waypoints_reached=max_waypoint_reached,
             collision_occurred=collision_occurred,
             completed_successfully=completed_successfully,
             avg_target_speed=float(np.mean(target_speeds)) if target_speeds else 0.0,
@@ -375,12 +387,17 @@ class MetricsTracker:
 
         self.episode_metrics.append(episode_metrics)
 
-        # Print episode summary
+        # Print episode summary with waypoint progress
         duration = end_time - self.current_episode_start_time
         print(f"📊 Episode {self.current_episode} completed:")
         print(f"   Reward: {total_reward:.2f} | Steps: {total_steps} | Duration: {duration:.1f}s")
+        waypoint_info = (
+            f" | Waypoints: {max_waypoint_reached + 1}/{self.current_waypoints.__len__() if self.current_waypoints else '?'}"
+            if waypoint_indices
+            else ""
+        )
         print(
-            f"   Max Speed: {episode_metrics.max_speed:.1f} m/s | Min Distance: {episode_metrics.min_distance_to_goal:.1f}m"
+            f"   Max Speed: {episode_metrics.max_speed:.1f} m/s | Min Distance: {episode_metrics.min_distance_to_goal:.1f}m{waypoint_info}"
         )
 
     def _update_graphs(self) -> None:
@@ -464,6 +481,9 @@ class MetricsTracker:
         if not episode_metrics_snapshot:
             return
 
+        # Check if we have waypoint data (max_waypoints_reached >= 0 means we have waypoint tracking)
+        has_waypoints = any(e.max_waypoints_reached >= 0 for e in episode_metrics_snapshot)
+
         fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(14, 10))
         fig.suptitle("Episode Summary", fontsize=16, fontweight="bold")
 
@@ -471,7 +491,6 @@ class MetricsTracker:
         rewards = [e.cumulative_reward for e in episode_metrics_snapshot]
         steps = [e.total_steps for e in episode_metrics_snapshot]
         max_speeds = [e.max_speed for e in episode_metrics_snapshot]
-        min_distances = [e.min_distance_to_goal for e in episode_metrics_snapshot]
 
         # Episode rewards
         ax1.bar(episodes, rewards, alpha=0.7, color="skyblue", edgecolor="navy")
@@ -494,12 +513,24 @@ class MetricsTracker:
         ax3.set_title("Max Speed Achieved")
         ax3.grid(True, alpha=0.3)
 
-        # Min distance to goal
-        ax4.bar(episodes, min_distances, alpha=0.7, color="gold", edgecolor="orange")
-        ax4.set_xlabel("Episode")
-        ax4.set_ylabel("Min Distance (m)")
-        ax4.set_title("Closest to Goal")
-        ax4.grid(True, alpha=0.3)
+        # Waypoints reached OR Min distance to goal
+        if has_waypoints:
+            waypoints_reached = [
+                e.max_waypoints_reached + 1 for e in episode_metrics_snapshot
+            ]  # +1 for human-readable
+            ax4.bar(episodes, waypoints_reached, alpha=0.7, color="purple", edgecolor="darkviolet")
+            ax4.set_xlabel("Episode")
+            ax4.set_ylabel("Waypoints Reached")
+            ax4.set_title("Waypoint Progress")
+            ax4.grid(True, alpha=0.3)
+        else:
+            # Fallback to distance for legacy configs
+            min_distances = [e.min_distance_to_goal for e in episode_metrics_snapshot]
+            ax4.bar(episodes, min_distances, alpha=0.7, color="gold", edgecolor="orange")
+            ax4.set_xlabel("Episode")
+            ax4.set_ylabel("Min Distance (m)")
+            ax4.set_title("Closest to Goal")
+            ax4.grid(True, alpha=0.3)
 
         plt.tight_layout()
         plt.savefig(self.metrics_dir / "episode_summary.png", dpi=100, bbox_inches="tight")
@@ -592,12 +623,11 @@ class MetricsTracker:
         )
 
         if has_waypoints:
-            fig, axes = plt.subplots(4, 1, figsize=(12, 14))
-            ax1, ax2, ax3, ax4 = axes
+            # Waypoint mode: 3 subplots (Speed, Waypoint Progress, Rewards)
+            fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 12))
         else:
-            fig, axes = plt.subplots(3, 1, figsize=(12, 10))
-            ax1, ax2, ax3 = axes
-            ax4 = None
+            # Legacy mode: 3 subplots (Speed, Distance to Goal, Rewards)
+            fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 10))
 
         fig.suptitle(
             f"Performance Metrics (Episode {current_episode})", fontsize=16, fontweight="bold"
@@ -605,7 +635,6 @@ class MetricsTracker:
 
         steps = [s.step for s in steps_snapshot]
         speeds = [s.speed_mps for s in steps_snapshot]
-        distances = [s.distance_to_goal for s in steps_snapshot]
 
         # Reward components
         command_shaping = [s.command_shaping for s in steps_snapshot]
@@ -614,7 +643,7 @@ class MetricsTracker:
         idle_penalties = [s.idle_penalty for s in steps_snapshot]
         time_penalties = [s.time_penalty for s in steps_snapshot]
 
-        # Speed over time
+        # Speed over time (always first subplot)
         ax1.plot(steps, speeds, "purple", linewidth=2, label="Speed")
         ax1.fill_between(steps, speeds, alpha=0.3, color="purple")
         ax1.set_ylabel("Speed (m/s)")
@@ -622,34 +651,28 @@ class MetricsTracker:
         ax1.grid(True, alpha=0.3)
         ax1.legend()
 
-        # Distance to final goal (unchanged - always shows distance to final destination)
-        ax2.plot(steps, distances, "orange", linewidth=2, label="Distance to Goal")
-        ax2.set_ylabel("Distance (m)")
-        ax2.set_title("Distance to Goal")
-        ax2.grid(True, alpha=0.3)
-        ax2.legend()
-
-        # Waypoint progress (new - shows distance to current waypoint)
+        # Second subplot: Waypoint Progress OR Distance to Goal
         if has_waypoints:
+            # Waypoint Progress: distance to current waypoint with transition markers
             waypoint_distances = [
                 getattr(s, "distance_to_current_waypoint", 0.0) for s in steps_snapshot
             ]
             waypoint_indices = [getattr(s, "current_waypoint_index", 0) for s in steps_snapshot]
 
             # Plot distance to current waypoint
-            ax3.plot(
+            ax2.plot(
                 steps, waypoint_distances, "blue", linewidth=2, label="Distance to Current Waypoint"
             )
-            ax3.set_ylabel("Distance (m)")
-            ax3.set_title("Waypoint Progress")
-            ax3.grid(True, alpha=0.3)
+            ax2.set_ylabel("Distance (m)")
+            ax2.set_title("Waypoint Progress")
+            ax2.grid(True, alpha=0.3)
 
             # Add waypoint index changes as vertical lines
             prev_idx = waypoint_indices[0] if waypoint_indices else 0
             for i, idx in enumerate(waypoint_indices):
-                if idx != prev_idx:
-                    ax3.axvline(x=steps[i], color="green", linestyle="--", alpha=0.5, linewidth=1)
-                    ax3.text(
+                if idx != prev_idx and i < len(steps):
+                    ax2.axvline(x=steps[i], color="green", linestyle="--", alpha=0.5, linewidth=1)
+                    ax2.text(
                         steps[i],
                         max(waypoint_distances) * 0.9,
                         f"WP{idx}",
@@ -659,17 +682,18 @@ class MetricsTracker:
                     )
                     prev_idx = idx
 
-            ax3.legend()
-
-            # Reward components on ax4
-            reward_ax = ax4
+            ax2.legend()
         else:
-            # Reward components on ax3 (no waypoint data)
-            reward_ax = ax3
+            # Legacy: Distance to Goal
+            distances = [s.distance_to_goal for s in steps_snapshot]
+            ax2.plot(steps, distances, "orange", linewidth=2, label="Distance to Goal")
+            ax2.set_ylabel("Distance (m)")
+            ax2.set_title("Distance to Goal")
+            ax2.grid(True, alpha=0.3)
+            ax2.legend()
 
-        # Ensure reward_ax is not None
-        if reward_ax is None:
-            raise ValueError("reward_ax should not be None")
+        # Third subplot: Reward components (same for both modes)
+        reward_ax = ax3
 
         # Reward components stacked
         reward_ax.fill_between(
