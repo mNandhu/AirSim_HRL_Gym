@@ -42,6 +42,7 @@ class MetricsCallback(BaseCallback):
         model_dir: Path,
         save_interval: int,
         waypoints: Sequence[tuple[float, float]],
+        max_episodes: int | None = None,
     ) -> None:
         super().__init__()
         self._tracker = metrics_tracker
@@ -49,6 +50,7 @@ class MetricsCallback(BaseCallback):
         self._model_dir = model_dir
         self._save_interval = max(save_interval, 1)
         self._waypoints = list(waypoints)
+        self._max_episodes = max_episodes
 
         self._episode_index = 0
         self._episode_reward = 0.0
@@ -134,6 +136,11 @@ class MetricsCallback(BaseCallback):
             self._episode_index += 1
             self._episode_reward = 0.0
             self._episode_step = 0
+
+            # Stop training if max episodes reached
+            if self._max_episodes is not None and self._episode_index >= self._max_episodes:
+                print(f"\n✅ Reached maximum episodes ({self._max_episodes}), stopping training...")
+                return False
 
         return True
 
@@ -224,6 +231,9 @@ def main() -> int:
     except Exception as exc:  # pragma: no cover - non-critical
         print(f"Warning: could not copy settings file: {exc}")
 
+    # Calculate total_timesteps as episodes * max_episode_length
+    # The callback will stop training after the specified number of episodes,
+    # so this is an upper bound that ensures we don't run out of timesteps early
     total_timesteps = (
         args.total_timesteps
         if args.total_timesteps is not None
@@ -303,6 +313,7 @@ def main() -> int:
             model_dir=model_dir,
             save_interval=args.save_interval,
             waypoints=waypoints,
+            max_episodes=args.episodes,
         )
 
         model.learn(
