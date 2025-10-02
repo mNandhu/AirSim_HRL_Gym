@@ -130,3 +130,158 @@ run_task T035 & run_task T036 & run_task T037 & run_task T038
 -   [x] **T056 Trainer-to-simulator connection mapping** — update training jobs to accept AIRSIM_HOST/AIRSIM_PORT environment variables and modify CarClient initialization to use these parameters for targeted simulator connections.
 -   [x] **T057 Dynamic settings.json generation** — add orchestrator capability to generate unique settings.json files per AirSim instance with different ports and pass these to simulator launch commands.
 -   [x] **T058 Multi-instance coordination validation** — create integration tests that verify multiple trainers can connect to their assigned simulator instances simultaneously without port conflicts.
+
+---
+
+## Phase 5: Single-Agent SAC Pivot (Post-80-Episode Analysis)
+
+> **Context**: After 80 episodes of hierarchical RL training, empirical evidence shows workers cannot learn with insufficient data (1,500 steps each vs 10,000+ required), manager learns from random worker outputs (diverging policy), and zero task progress (0/80 episodes reached any waypoint). Mathematical proof: P(hierarchical success | untrained workers) = 0. **Decision**: Pivot to proven single-agent SAC approach to establish baseline, then optionally return to hierarchical with proper pre-training.
+
+### Phase 5A — Single-Agent SAC Implementation (Fast Baseline)
+
+> **Note**: Single-agent keeps existing PID control for low-level dynamics. Agent outputs [target_speed, target_steering] just like hierarchical workers did—we're only removing the manager→command layer. This is simpler to learn (2D action space) and proven in autonomous driving research.
+
+-   [x] **T059 Single-agent environment wrapper** — Create `src/airsim_env/single_agent_env.py` that exposes flat action space WITHOUT command hierarchy but WITH PID control.
+
+    -   Input: Observation (same as current: images, telemetry, waypoints)
+    -   Output: `Box(2)` actions [target_speed, target_steering] ∈ [0-10, -1 to 1] (same as workers)
+    -   PID: Keep existing speed PID (converts target_speed → throttle/brake)
+    -   Reward: Use existing reward components (progress, lane deviation, collision, etc.)
+    -   Success criteria: Drop-in Gym API compatibility for SB3
+
+-   [x] **T060 Single-agent training script** — Create `src/scripts/train_single_agent.py` based on existing `train_and_eval.py` but instantiate single SAC policy instead of hierarchical coordinator.
+
+    -   Remove: DQNManager, SAC workers, CommandCoordinator
+    -   Add: Single `SAC(policy="MultiInputPolicy", env=SingleAgentEnv, ...)`
+    -   Hyperparameters: `learning_rate=3e-4`, `buffer_size=100000`, `learning_starts=10000`, `batch_size=256`, `tau=0.005`, `gamma=0.99`
+    -   Logging: Reuse artifact manager, metrics tracker (same as hierarchical)
+
+-   [x] **T061 Action space validation** — Unit test that action bounds, scaling, and control mapping work correctly.
+
+    -   Test: Actions ∈ [-1, 1] map to valid throttle/brake/steering
+    -   Test: Edge cases (simultaneous throttle+brake, extreme steering)
+    -   Test: Deterministic action→control mapping
+
+-   [x] **T062 Single-agent reward validation** — Integration test that reward components fire correctly without command context.
+
+    -   Test: Progress velocity reward works with direct actions
+    -   Test: Lane deviation penalty applies
+    -   Test: Collision penalty triggers
+    -   Test: Waypoint progress tracked correctly
+
+-   [ ] **T063 Baseline training run** — Execute 100-200 episode training to establish convergence baseline.
+
+    -   Target: 50%+ episodes reach ≥1 waypoint by episode 200
+    -   Metrics: Episode length, cumulative reward, waypoints reached, collision rate
+    -   Success criteria: Upward trend in waypoints, decreasing collision rate
+    -   Artifacts: Save checkpoints every 25 episodes, generate learning curves
+
+-   [x] **T064 Single-agent evaluation script** — Extend `train_and_eval.py eval` mode or create separate evaluator for trained single-agent checkpoints.
+    -   Load: Trained SAC policy from checkpoint
+    -   Run: Deterministic evaluation episodes (no exploration noise)
+    -   Report: Success rate, waypoint completion, trajectory visualization
+
+### Phase 5B — Documentation & Analysis
+
+-   [ ] **T065 Update architecture docs** — Revise `docs/model-structure.md` and README to reflect single-agent approach as primary training mode.
+
+    -   Mark hierarchical mode as "experimental/pre-training required"
+    -   Document single-agent as "validated baseline"
+    -   Add performance comparison table (when available)
+
+-   [ ] **T066 Training comparison analysis** — Generate comparative report between hierarchical (80 ep) and single-agent (200 ep) results.
+
+    -   Metrics: Waypoints reached, episode length, collision rate, training time
+    -   Graphs: Learning curves, trajectory quality, convergence speed
+    -   Document: `docs/training-comparison-hierarchical-vs-single-agent.md`
+
+-   [ ] **T067 Hyperparameter tuning guide** — Document SAC hyperparameters and tuning recommendations for this task.
+    -   Learning rate: 1e-4 to 5e-4 range
+    -   Buffer size: 50K-200K (vs episode length × episodes)
+    -   Tau: 0.005-0.01 (soft update rate)
+    -   Gamma: 0.95-0.99 (discount factor for waypoint sequences)
+
+### Phase 5C — Optional: Return to Hierarchical (If Time Permits)
+
+> **Only proceed if single-agent succeeds AND hierarchical interpretability is required**
+
+-   [ ] **T068 Worker pre-training infrastructure** — Create `src/scripts/pretrain_workers.py` to train individual SAC workers in isolation.
+
+    -   Per-worker environments: Simplified tasks (straight lane for FOLLOW_LANE, turn circle for TURN_LEFT/RIGHT, deceleration for STOP)
+    -   Training: 50K steps per worker with shaped rewards
+    -   Save: Worker checkpoints for hierarchical initialization
+
+-   [ ] **T069 Imitation learning bootstrap** — Use trained single-agent SAC to generate demonstrations for worker pre-training.
+
+    -   Extract: Trajectories from trained single-agent policy
+    -   Label: Commands based on trajectory context (lane following, turning, stopping)
+    -   Train: Workers via behavior cloning on labeled demonstrations
+    -   Validate: Workers achieve >70% task success on isolated tasks
+
+-   [ ] **T070 Hierarchical training with pre-trained workers** — Resume hierarchical training with competent workers frozen or fine-tuning.
+
+    -   Load: Pre-trained worker checkpoints
+    -   Freeze: Workers during initial manager training (50-100 episodes)
+    -   Train: DQN manager to sequence competent workers
+    -   Fine-tune: Optionally unfreeze workers for joint optimization
+
+-   [ ] **T071 Hierarchical validation** — Compare hierarchical performance with single-agent baseline.
+    -   Metrics: Match or exceed single-agent waypoint completion
+    -   Interpretability: Analyze command sequences for debugging/understanding
+    -   Generalization: Test on unseen waypoint configurations
+    -   Decision: Keep hierarchical if interpretability benefit outweighs complexity cost
+
+### Phase 5D — Cleanup & Deprecation
+
+-   [ ] **T072 Mark hierarchical training as deprecated** — Update CLI help text and docs to guide users to single-agent mode.
+
+    -   Add warning: "Hierarchical mode requires worker pre-training. See docs/hierarchical-training-guide.md"
+    -   Default: Single-agent mode in training scripts
+    -   Flag: `--hierarchical` to opt-in to hierarchical (with pre-training check)
+
+-   [ ] **T073 Archive 80-episode analysis** — Move hierarchical training analysis to `docs/archive/` for historical reference.
+
+    -   Files: `training-analysis-20ep-not-converging.md`, `training-analysis-80ep-final-verdict.md`
+    -   Add: Forward pointer to single-agent approach in archive files
+    -   Preserve: Lessons learned about hierarchical RL bootstrapping
+
+-   [ ] **T074 Update reward contract** — Ensure reward documentation reflects single-agent usage (no command-specific shaping).
+    -   Clarify: Shaping rewards apply to all actions (not command-conditioned)
+    -   Update: Examples show direct action → reward mapping
+    -   Test: Reward calculations match documented formulas
+
+## Dependencies (Phase 5)
+
+-   **T059-T062** can run in parallel (single-agent implementation)
+-   **T063** depends on T059-T062 (need working single-agent before training)
+-   **T064** depends on T063 (need trained checkpoint to evaluate)
+-   **T065-T067** can run in parallel with T063 (documentation during training)
+-   **T068-T071** are optional and depend on T063 success + decision to pursue hierarchical
+-   **T072-T074** are cleanup tasks after primary approach is validated
+
+## Validation Checklist (Phase 5)
+
+-   [ ] Single-agent SAC converges within 200 episodes (≥1 waypoint reached in 50%+ episodes)
+-   [ ] Action space validated (no NaN, control bounds respected)
+-   [ ] Reward components fire correctly without command hierarchy
+-   [ ] Training artifacts generated (checkpoints, metrics, graphs)
+-   [ ] Documentation updated to reflect primary training mode
+-   [ ] Evaluation script produces deterministic results
+-   [ ] (Optional) Hierarchical training matches single-agent performance after pre-training
+
+## Success Metrics (Phase 5A Baseline)
+
+| Metric                | Target (Episode 200)      | Measured | Status |
+| --------------------- | ------------------------- | -------- | ------ |
+| **Waypoints Reached** | ≥1 in 50%+ episodes       | TBD      | 🔄     |
+| **Collision Rate**    | <50%                      | TBD      | 🔄     |
+| **Episode Length**    | >150 steps avg            | TBD      | 🔄     |
+| **Cumulative Reward** | >500 avg                  | TBD      | 🔄     |
+| **Learning Trend**    | Upward over 50-ep windows | TBD      | 🔄     |
+
+## Notes (Phase 5)
+
+-   **Why single-agent first**: 80 episodes of hierarchical training proved workers cannot learn from scratch (zero loss, zero waypoints). Single SAC establishes viable baseline in ~1 week vs months of hierarchical debugging.
+-   **Hierarchical optional**: Only revisit if interpretability is critical AND single-agent succeeds. Pre-training is mandatory for hierarchical RL.
+-   **Reward rebalancing preserved**: Collision penalty (-50), progress rewards (+2.0 coef), command persistence (10 steps) were correct—problem was hierarchical bootstrapping, not rewards.
+-   **Timeline estimate**: T059-T064 (~3-5 days implementation + 2-3 days training) = 1 week to working baseline. Compare to hierarchical pre-training (T068-T070: 3-4 weeks minimum).
