@@ -37,10 +37,13 @@ class RewardConfig:
     """Configuration parameters for reward shaping components."""
 
     # --- Major Penalties (Reduced to not dominate episode) ---
-    collision_penalty: float = 50.0  # Penalty for collision (was 200.0, reduced to allow learning)
+    collision_penalty: float = (
+        10.0  # Penalty for collision (reduced from 50 to allow learning signal)
+    )
 
     # --- Goal & Task Bonuses (Sparse) ---
     completion_bonus: float = 100.0  # Large bonus for successfully completing a high-level command.
+    waypoint_progress_bonus: float = 50.0  # Bonus for reaching a waypoint
 
     # --- Dense Shaping Coefficients (Per-step guidance) ---
     # Increased to provide stronger rewards for good navigation behavior
@@ -79,6 +82,7 @@ class RewardCalculator:
         active_command: str,
         command_completed: bool,
         progress_possible: bool,
+        waypoint_reached: bool = False,
     ) -> tuple[dict[str, float], float]:
         """
         Calculates the total reward and its individual components.
@@ -88,6 +92,7 @@ class RewardCalculator:
             active_command: The name of the active high-level command (e.g., "FOLLOW_LANE").
             command_completed: Flag indicating if the high-level command just finished.
             progress_possible: Flag indicating if the agent is in a state where it should be moving.
+            waypoint_reached: Flag indicating if a waypoint was just reached.
 
         Returns:
             A tuple containing a dictionary of reward components and the total scalar reward.
@@ -98,9 +103,12 @@ class RewardCalculator:
         heading_alignment = self._heading_alignment_reward(current_state)
 
         # --- Apply command-specific shaping ---
-        # This is the core of HRL reward shaping: the reward function adapts to the current task.
+        # For single-agent (no command), use default navigation shaping
         command_shaping_reward = 0.0
-        if active_command == "FOLLOW_LANE":
+        if not active_command or active_command == "":
+            # Single-agent mode: combine progress and heading alignment
+            command_shaping_reward = progress + heading_alignment
+        elif active_command == "FOLLOW_LANE":
             command_shaping_reward = lane_deviation_penalty + progress
         elif "TURN" in active_command:
             command_shaping_reward = heading_alignment + progress
@@ -108,12 +116,14 @@ class RewardCalculator:
         # --- Calculate penalties and bonuses ---
         collision = -self._config.collision_penalty if current_state.collision else 0.0
         completion_bonus = self._config.completion_bonus if command_completed else 0.0
+        waypoint_bonus = self._config.waypoint_progress_bonus if waypoint_reached else 0.0
         idle_penalty = self._idle_penalty(current_state, progress_possible)
 
         components = {
             "command_shaping": command_shaping_reward,
             "collision_penalty": collision,
             "completion_bonus": completion_bonus,
+            "waypoint_progress_bonus": waypoint_bonus,
             "idle_penalty": idle_penalty,
             # Applied every time step to push for efficiency
             "time_penalty": self._config.time_penalty,

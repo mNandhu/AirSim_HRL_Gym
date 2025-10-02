@@ -88,8 +88,10 @@ def test_reward_components_without_command(env):
     components = info["reward_components"]
 
     assert pytest.approx(reward, rel=1e-6) == sum(components.values())
-    assert pytest.approx(components["command_shaping"], abs=1e-6) == 0.0
+    # Command shaping should now be non-zero for single-agent (progress + heading)
+    assert components["command_shaping"] > 0.0
     assert "collision_penalty" in components
+    assert "waypoint_progress_bonus" in components
 
 
 def test_waypoint_completion_sets_goal_flag(env):

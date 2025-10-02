@@ -199,6 +199,7 @@ class AirSimEnv:
 
         # Update path manager with current position and add waypoint tracking
         current_position = telemetry.get("position_xy")
+        waypoint_reached = False
         if current_position:
             waypoint_reached = self._path_manager.update(current_position)
             if waypoint_reached:
@@ -220,7 +221,10 @@ class AirSimEnv:
 
         progress_possible = bool(telemetry.get("progress_possible", True))
         reward_components, reward = self.compute_reward(
-            prev_telemetry, telemetry, progress_possible=progress_possible
+            prev_telemetry,
+            telemetry,
+            progress_possible=progress_possible,
+            waypoint_reached=waypoint_reached,
         )
 
         terminated = self._check_terminated(telemetry)
@@ -269,6 +273,7 @@ class AirSimEnv:
         current: Mapping[str, Any],
         *,
         progress_possible: bool,
+        waypoint_reached: bool = False,
     ) -> tuple[dict[str, float], float]:
         current_state = self._vehicle_state_from_telemetry(current, previous=previous)
         active_command = self._command_context.name or ""
@@ -278,6 +283,7 @@ class AirSimEnv:
             active_command=active_command,
             command_completed=command_completed,
             progress_possible=progress_possible,
+            waypoint_reached=waypoint_reached,
         )
         # Command completion is single-use until re-armed
         if command_completed:
