@@ -57,7 +57,7 @@ class RewardConfig:
     heading_alignment_coef: float = 1.0  # Rewards aligning with the path during turns.
     idle_penalty_coef: float = 0.5  # Small penalty for being stationary when progress is possible.
     action_smoothness_coef: float = (
-        1.0  # Penalty for rapid steering changes (increased from 0.5 to reduce zigzag)
+        2.0  # Penalty for rapid steering changes (increased from 0.5 to reduce zigzag)
     )
 
     # --- Thresholds ---
