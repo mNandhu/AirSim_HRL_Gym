@@ -269,18 +269,15 @@ class AirSimSimulatorAdapter:
 
             # Count road pixels using a threshold-based approach
             # AirSim Neighbourhood map uses specific segment IDs for road
-            # After analysis, these are the common road-related segment IDs
-            # ID 0 often represents road/ground in many AirSim environments
-            # We'll use a more flexible approach: low segment IDs (< 2000000) are typically road/ground
+            # After testing with debug_lane_coverage.py, confirmed that:
+            # - Segment ID 9306614 is the main road surface (pink/magenta in seg view)
+            # - Segment ID 0 is sky/background (cyan in seg view)
+            # - ID 15268432 appears to be road markings/lines
             total_pixels = seg_mask.size
 
-            # Strategy 1: Check if segment ID 0 exists (often road)
-            road_pixels_count = np.sum(seg_mask == 0)
-
-            # Strategy 2: If no ID 0, use low-value segments (< 2M are usually ground/road)
-            if road_pixels_count < total_pixels * 0.1:  # Less than 10%, try alternative
-                road_pixels = seg_mask < 2000000
-                road_pixels_count = np.sum(road_pixels)
+            # Count road-related segment IDs
+            road_pixels = (seg_mask == 9306614) | (seg_mask == 15268432)
+            road_pixels_count = np.sum(road_pixels)
 
             if total_pixels == 0:
                 return 1.0

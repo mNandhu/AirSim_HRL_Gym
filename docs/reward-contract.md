@@ -1,20 +1,27 @@
-# Reward Contract (Version 4.2)
+# Reward Contract (Version 4.3)
 
 **Last Updated**: 2025-10-05
 
 This document outlines the reward shaping components for the AirSim HRL agent. The total reward is the sum of these components. The function adapts its shaping based on the active high-level command, with full support for single-agent (non-hierarchical) training.
 
-## Changes in Version 4.2 (Steering Smoothness)
+## Changes in Version 4.3 (Lane-Keeping Enforcement)
+
+-   **Off-road threshold tightened**: `0.20 → 0.35` (now requires 35% road coverage minimum)
+-   **Rationale**: Agent was driving at 19-20% (road edge), going off-road before waypoints
+-   **Action smoothness penalty doubled**: `0.5 → 1.0` coefficient
+-   **Effect**: Forces better lane-keeping and smoother steering control
+
+### Historical Changes (Version 4.2 - Steering Smoothness)
 
 -   **Action smoothness penalty added**: Penalizes rapid steering changes to reduce zigzag behavior
--   **Coefficient**: `action_smoothness_coef = 0.5` (tunable)
--   **Formula**: `-0.5 * |steering[t] - steering[t-1]|`
+-   **Coefficient**: `action_smoothness_coef = 0.5` (initial value)
+-   **Formula**: `-coef * |steering[t] - steering[t-1]|`
 -   **Effect**: Encourages smooth, gradual turns instead of erratic oscillations
 
 ### Historical Changes (Version 4.1 - Road-Following Fix)
 
 -   **Lane deviation added to single-agent**: Now includes `lane_deviation_penalty` in command shaping
--   **Off-road termination**: Episodes end when `lane_mask_coverage_ratio < 0.2` (80% off-road)
+-   **Off-road termination**: Episodes end when `lane_mask_coverage_ratio < 0.2` (80% off-road) - Later changed to 0.35 in v4.3
 -   **Lane segmentation enabled**: Proper calculation of road coverage from segmentation masks
 -   **Single-agent formula**: Changed from `progress + heading` to `progress + heading + lane_deviation`
 
@@ -90,30 +97,30 @@ These penalties apply in all situations to discourage universally undesirable be
 progress_velocity = 5.0 * 0.8 * 2.0 = +8.0
 heading_alignment = 0.8 * 1.0 = +0.8
 lane_deviation = 0.0 (on road center)
-action_smoothness = -0.5 * 0.05 = -0.025 (small change)
+action_smoothness = -1.0 * 0.05 = -0.05 (v4.3: coefficient doubled)
 command_shaping = 8.0 + 0.8 + 0.0 = +8.8
 time_penalty = -0.005
-Total per step = +8.77
+Total per step = +8.75
 ```
 
 **Episode with 50 steps, 1 waypoint, smooth driving**:
 
 ```
-Per-step rewards: +8.77 * 50 = +438.5
+Per-step rewards: +8.75 * 50 = +437.5
 Waypoint bonus: +50.0
-Total episode reward: +488.5 ✓
+Total episode reward: +487.5 ✓
 ```
 
 **Episode with 50 steps, 1 waypoint, erratic steering (avg change 0.8)**:
 
 ```
-Per-step rewards (with large smoothness penalty):
+Per-step rewards (with large smoothness penalty in v4.3):
   progress + heading = +8.8
-  action_smoothness = -0.5 * 0.8 = -0.4 (per step)
+  action_smoothness = -1.0 * 0.8 = -0.8 (per step, doubled from v4.2)
   time_penalty = -0.005
-  Total per step = +8.395
-Total: 8.395 * 50 + 50 = +469.75
-Penalty for erratic steering: -18.75 ❌
+  Total per step = +7.995
+Total: 7.995 * 50 + 50 = +449.75
+Penalty for erratic steering: -37.75 ❌ (doubled from v4.2)
 ```
 
 Compare to hierarchical training (Version 3.0) where single-agent got:

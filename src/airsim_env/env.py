@@ -348,9 +348,22 @@ class AirSimEnv:
         if telemetry.get("collision", False):
             return True, "collision"
 
-        # Terminate if severely off-road (< 20% lane coverage)
+        # Grace period: Skip off-road check for first 10 steps (allow spawn adjustment)
+        if self._step_index < 10:
+            # Only check collision during grace period
+            if self._path_manager.all_waypoints_reached:
+                waypoints_reached = self._path_manager.current_waypoint_index
+                return (
+                    True,
+                    f"success (reached {waypoints_reached}/{self._path_manager.total_waypoints} waypoints)",
+                )
+            return False, "active"
+
+        # Terminate if severely off-road (< 35% lane coverage)
+        # Changed from 0.20 to 0.35 to enforce better lane-keeping
+        # Grace period above prevents immediate spawn termination
         lane_ratio = float(telemetry.get("lane_mask_coverage_ratio", 1.0))
-        if lane_ratio < 0.2:  # Less than 20% on road
+        if lane_ratio < 0.35:  # Less than 35% on road
             return True, f"off_road (coverage={lane_ratio:.3f})"
 
         # Episode completes when all waypoints are reached
