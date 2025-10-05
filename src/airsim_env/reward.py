@@ -103,11 +103,11 @@ class RewardCalculator:
         heading_alignment = self._heading_alignment_reward(current_state)
 
         # --- Apply command-specific shaping ---
-        # For single-agent (no command), use default navigation shaping
+        # Single-agent now includes lane deviation to encourage road-following
         command_shaping_reward = 0.0
         if not active_command or active_command == "":
-            # Single-agent mode: combine progress and heading alignment
-            command_shaping_reward = progress + heading_alignment
+            # Single-agent mode: combine ALL navigation rewards including lane keeping
+            command_shaping_reward = progress + heading_alignment + lane_deviation_penalty
         elif active_command == "FOLLOW_LANE":
             command_shaping_reward = lane_deviation_penalty + progress
         elif "TURN" in active_command:

@@ -80,6 +80,7 @@ class StepMetrics:
     command_shaping: float = 0.0
     collision_penalty: float = 0.0
     completion_bonus: float = 0.0
+    waypoint_progress_bonus: float = 0.0
     idle_penalty: float = 0.0
     time_penalty: float = 0.0
     position_xy: Optional[Tuple[float, float]] = None
@@ -89,6 +90,9 @@ class StepMetrics:
     distance_to_current_waypoint: Optional[float] = None
     current_waypoint_index: Optional[int] = None
     total_waypoints: Optional[int] = None
+
+    # Lane keeping metrics
+    lane_mask_coverage_ratio: Optional[float] = None
 
 
 @dataclass
@@ -207,6 +211,9 @@ class MetricsTracker:
         current_waypoint_index = telemetry.get("current_waypoint_index")
         total_waypoints = telemetry.get("total_waypoints")
 
+        # Extract lane keeping data
+        lane_mask_coverage_ratio = telemetry.get("lane_mask_coverage_ratio")
+
         next_position_xy: Optional[Tuple[float, float]] = None
         next_goal_xy: Optional[Tuple[float, float]] = None
         if next_telemetry is not None:
@@ -239,6 +246,7 @@ class MetricsTracker:
             command_shaping=reward_components.get("command_shaping", 0.0),
             collision_penalty=reward_components.get("collision_penalty", 0.0),
             completion_bonus=reward_components.get("completion_bonus", 0.0),
+            waypoint_progress_bonus=reward_components.get("waypoint_progress_bonus", 0.0),
             idle_penalty=reward_components.get("idle_penalty", 0.0),
             time_penalty=reward_components.get("time_penalty", 0.0),
             position_xy=position_xy,
@@ -246,6 +254,7 @@ class MetricsTracker:
             distance_to_current_waypoint=distance_to_current_waypoint,
             current_waypoint_index=current_waypoint_index,
             total_waypoints=total_waypoints,
+            lane_mask_coverage_ratio=lane_mask_coverage_ratio,
         )
 
         self.current_episode_steps.append(step_metrics)
@@ -639,12 +648,23 @@ class MetricsTracker:
             for s in steps_snapshot
         )
 
-        if has_waypoints:
+        # Check if we have lane coverage data
+        has_lane_data = any(
+            hasattr(s, "lane_mask_coverage_ratio") and s.lane_mask_coverage_ratio is not None
+            for s in steps_snapshot
+        )
+
+        if has_waypoints and has_lane_data:
+            # Full mode: 4 subplots (Speed, Waypoint Progress, Rewards, Lane Coverage)
+            fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, figsize=(12, 14))
+        elif has_waypoints:
             # Waypoint mode: 3 subplots (Speed, Waypoint Progress, Rewards)
             fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 12))
+            ax4 = None
         else:
             # Legacy mode: 3 subplots (Speed, Distance to Goal, Rewards)
             fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 10))
+            ax4 = None
 
         fig.suptitle(
             f"Performance Metrics (Episode {current_episode})", fontsize=16, fontweight="bold"
@@ -657,6 +677,7 @@ class MetricsTracker:
         command_shaping = [s.command_shaping for s in steps_snapshot]
         collision_penalties = [s.collision_penalty for s in steps_snapshot]
         completion_bonuses = [s.completion_bonus for s in steps_snapshot]
+        waypoint_progress_bonuses = [s.waypoint_progress_bonus for s in steps_snapshot]
         idle_penalties = [s.idle_penalty for s in steps_snapshot]
         time_penalties = [s.time_penalty for s in steps_snapshot]
 
@@ -744,26 +765,47 @@ class MetricsTracker:
             color="gold",
         )
 
-        idle_base = [
-            cs + cp + cb + ip
-            for cs, cp, cb, ip in zip(
+        waypoint_base = [
+            cs + cp + cb + wb
+            for cs, cp, cb, wb in zip(
                 command_shaping,
                 collision_penalties,
                 completion_bonuses,
+                waypoint_progress_bonuses,
+                strict=False,
+            )
+        ]
+        reward_ax.fill_between(
+            steps,
+            completion_base,
+            waypoint_base,
+            alpha=0.7,
+            label="Waypoint Bonus",
+            color="cyan",
+        )
+
+        idle_base = [
+            cs + cp + cb + wb + ip
+            for cs, cp, cb, wb, ip in zip(
+                command_shaping,
+                collision_penalties,
+                completion_bonuses,
+                waypoint_progress_bonuses,
                 idle_penalties,
                 strict=False,
             )
         ]
         reward_ax.fill_between(
-            steps, completion_base, idle_base, alpha=0.7, label="Idle Penalty", color="gray"
+            steps, waypoint_base, idle_base, alpha=0.7, label="Idle Penalty", color="gray"
         )
 
         time_base = [
-            cs + cp + cb + ip + tp
-            for cs, cp, cb, ip, tp in zip(
+            cs + cp + cb + wb + ip + tp
+            for cs, cp, cb, wb, ip, tp in zip(
                 command_shaping,
                 collision_penalties,
                 completion_bonuses,
+                waypoint_progress_bonuses,
                 idle_penalties,
                 time_penalties,
                 strict=False,
@@ -778,6 +820,34 @@ class MetricsTracker:
         reward_ax.set_title("Reward Component Breakdown")
         reward_ax.legend(loc="upper right")
         reward_ax.grid(True, alpha=0.3)
+
+        # Fourth subplot: Lane Coverage (if available)
+        if ax4 is not None and has_lane_data:
+            lane_coverage = [
+                getattr(s, "lane_mask_coverage_ratio", 1.0)
+                if hasattr(s, "lane_mask_coverage_ratio") and s.lane_mask_coverage_ratio is not None
+                else 1.0
+                for s in steps_snapshot
+            ]
+
+            ax4.plot(steps, lane_coverage, "teal", linewidth=2, label="Lane Coverage")
+            ax4.fill_between(steps, lane_coverage, alpha=0.3, color="teal")
+
+            # Add warning zone (< 50% on road)
+            ax4.axhline(
+                y=0.5, color="orange", linestyle="--", alpha=0.5, linewidth=1, label="50% Threshold"
+            )
+            # Add critical zone (< 20% on road = termination)
+            ax4.axhline(
+                y=0.2, color="red", linestyle="--", alpha=0.5, linewidth=1, label="20% Termination"
+            )
+
+            ax4.set_xlabel("Step")
+            ax4.set_ylabel("Lane Coverage Ratio")
+            ax4.set_title("Road Following (Lane Mask Coverage)")
+            ax4.set_ylim(-0.05, 1.05)
+            ax4.legend(loc="lower left")
+            ax4.grid(True, alpha=0.3)
 
         plt.tight_layout()
         # Save latest and per-episode variants

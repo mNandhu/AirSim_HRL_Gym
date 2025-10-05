@@ -42,6 +42,7 @@ class AirSimSimulatorAdapter:
         horizon: int,
         control_dt: float = 0.1,
         enable_rgb: bool = True,
+        perception_pipeline: Any = None,
     ) -> None:
         self._client = client
         self._step = 0
@@ -55,6 +56,7 @@ class AirSimSimulatorAdapter:
         self._current_waypoint_index = 0
         self._accumulator_time = 0.0
         self._enable_rgb = enable_rgb
+        self._perception_pipeline = perception_pipeline
 
     @property
     def client(self) -> Any:
@@ -228,6 +230,9 @@ class AirSimSimulatorAdapter:
         heading = _compute_heading_deg(car_state.kinematics_estimated.orientation)
         progress_possible = not has_collision and speed >= 0.2
 
+        # Calculate lane mask coverage from segmentation data
+        lane_mask_coverage = self._calculate_lane_coverage()
+
         return {
             "telemetry": {
                 "distance_to_goal": distance_to_goal,
@@ -235,7 +240,7 @@ class AirSimSimulatorAdapter:
                 "acceleration_mps2": acceleration,
                 "heading_deg": heading,
                 "collision": has_collision,
-                "lane_mask_coverage_ratio": 1.0,
+                "lane_mask_coverage_ratio": lane_mask_coverage,
                 "progress_possible": progress_possible,
                 "sim_time_sec": self._accumulator_time,
                 "position_xy": pos_xy,
@@ -243,6 +248,39 @@ class AirSimSimulatorAdapter:
             },
             "image": self._get_camera_image(),
         }
+
+    def _calculate_lane_coverage(self) -> float:
+        """Calculate the ratio of road pixels in the segmentation mask."""
+        if self._perception_pipeline is None:
+            return 1.0  # Default to on-road if no perception
+
+        try:
+            # Get current camera image
+            raw_image = self._get_camera_image()
+            if raw_image is None:
+                return 1.0
+
+            # Get segmentation mask from perception pipeline
+            perception_data = self._perception_pipeline.build_observation_inputs(raw_image)
+            seg_mask = perception_data.get("segmentation_mask")
+
+            if seg_mask is None:
+                return 1.0  # Default to on-road if segmentation fails
+
+            # Count road pixels (assuming road has specific segment IDs)
+            # Common AirSim road segment IDs: 0 (road), 1 (road marking)
+            # Adjust these IDs based on your AirSim environment
+            road_pixels = np.isin(seg_mask, [0, 1])
+            total_pixels = seg_mask.size
+
+            if total_pixels == 0:
+                return 1.0
+
+            coverage = float(np.sum(road_pixels)) / float(total_pixels)
+            return coverage
+
+        except Exception:  # pragma: no cover - fallback on error
+            return 1.0  # Default to on-road if calculation fails
 
     def _get_camera_image(self):
         if not self._enable_rgb:

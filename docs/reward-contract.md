@@ -1,10 +1,17 @@
-# Reward Contract (Version 4.0)
+# Reward Contract (Version 4.1)
 
-**Last Updated**: 2025-10-02
+**Last Updated**: 2025-10-04
 
 This document outlines the reward shaping components for the AirSim HRL agent. The total reward is the sum of these components. The function adapts its shaping based on the active high-level command, with full support for single-agent (non-hierarchical) training.
 
-## Changes in Version 4.0 (Single-Agent Compatibility)
+## Changes in Version 4.1 (Road-Following Fix)
+
+-   **Lane deviation added to single-agent**: Now includes `lane_deviation_penalty` in command shaping
+-   **Off-road termination**: Episodes end when `lane_mask_coverage_ratio < 0.2` (80% off-road)
+-   **Lane segmentation enabled**: Proper calculation of road coverage from segmentation masks
+-   **Single-agent formula**: Changed from `progress + heading` to `progress + heading + lane_deviation`
+
+### Historical Changes (Version 4.0)
 
 -   **Collision penalty reduced**: 50.0 → 10.0 (-80% to prevent signal domination)
 -   **Waypoint progress bonus added**: +50.0 per waypoint (new sparse reward)
@@ -37,12 +44,12 @@ These rewards are calculated on every time step to provide continuous feedback t
 
 This is the main guidance signal, composed of other dense rewards depending on the task.
 
-| Active Command                                | Formula                                          | Purpose                                                                       |
-| :-------------------------------------------- | :----------------------------------------------- | :---------------------------------------------------------------------------- |
-| **Single-Agent / No Command**                 | `progress_velocity` + `heading_alignment_reward` | **NEW in v4.0**: Default navigation for waypoint-following without hierarchy. |
-| **`FOLLOW_LANE`** (Hierarchical)              | `progress_velocity` + `lane_deviation_penalty`   | Drive efficiently along the road center.                                      |
-| **`TURN_LEFT` / `TURN_RIGHT`** (Hierarchical) | `progress_velocity` + `heading_alignment_reward` | Smoothly turn towards the next waypoint without overshooting.                 |
-| **`STOP` / Other**                            | `0.0`                                            | No specific guidance when stationary or for unrecognized commands.            |
+| Active Command                                | Formula                                                                     | Purpose                                                             |
+| :-------------------------------------------- | :-------------------------------------------------------------------------- | :------------------------------------------------------------------ |
+| **Single-Agent / No Command**                 | `progress_velocity` + `heading_alignment_reward` + `lane_deviation_penalty` | **v4.1**: Full navigation for waypoint-following WITH road-keeping. |
+| **`FOLLOW_LANE`** (Hierarchical)              | `progress_velocity` + `lane_deviation_penalty`                              | Drive efficiently along the road center.                            |
+| **`TURN_LEFT` / `TURN_RIGHT`** (Hierarchical) | `progress_velocity` + `heading_alignment_reward`                            | Smoothly turn towards the next waypoint without overshooting.       |
+| **`STOP` / Other**                            | `0.0`                                                                       | No specific guidance when stationary or for unrecognized commands.  |
 
 ### 2.2. Core Dense Components
 

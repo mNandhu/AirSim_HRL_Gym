@@ -330,9 +330,15 @@ class AirSimEnv:
         )
 
     def _check_terminated(self, telemetry: Mapping[str, Any]) -> bool:
-        """Check if episode should terminate (collision or all waypoints reached)."""
+        """Check if episode should terminate (collision, off-road, or all waypoints reached)."""
         if telemetry.get("collision", False):
             return True
+
+        # NEW: Terminate if severely off-road (< 20% lane coverage)
+        lane_ratio = float(telemetry.get("lane_mask_coverage_ratio", 1.0))
+        if lane_ratio < 0.2:  # Less than 20% on road
+            return True
+
         # Episode completes when all waypoints are reached
         return self._path_manager.all_waypoints_reached
 

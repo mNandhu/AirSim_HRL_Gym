@@ -267,6 +267,7 @@ def main() -> int:
             client,
             horizon=experiment.horizon,
             enable_rgb=enable_rgb,
+            perception_pipeline=perception,  # NEW: Pass perception for lane mask calculation
         )
 
         base_env = SingleAgentAirSimEnv(
