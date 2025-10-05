@@ -56,6 +56,7 @@ class RewardConfig:
     # Amplified to encourage decisive turning toward the waypoint
     heading_alignment_coef: float = 1.0  # Rewards aligning with the path during turns.
     idle_penalty_coef: float = 0.5  # Small penalty for being stationary when progress is possible.
+    action_smoothness_coef: float = 0.5  # Penalty for rapid steering changes (zigzag reduction)
 
     # --- Thresholds ---
     idle_threshold_mps: float = 0.1  # Speed below which the idle penalty applies.
@@ -70,6 +71,7 @@ class RewardCalculator:
 
     def __init__(self, config: RewardConfig | None = None) -> None:
         self._config = config or RewardConfig()
+        self._previous_steering: float = 0.0  # Track previous steering for smoothness penalty
 
     @property
     def config(self) -> RewardConfig:
@@ -83,6 +85,7 @@ class RewardCalculator:
         command_completed: bool,
         progress_possible: bool,
         waypoint_reached: bool = False,
+        action: dict[str, float] | None = None,
     ) -> tuple[dict[str, float], float]:
         """
         Calculates the total reward and its individual components.
@@ -93,6 +96,7 @@ class RewardCalculator:
             command_completed: Flag indicating if the high-level command just finished.
             progress_possible: Flag indicating if the agent is in a state where it should be moving.
             waypoint_reached: Flag indicating if a waypoint was just reached.
+            action: The action taken by the agent (dict with 'steering' key).
 
         Returns:
             A tuple containing a dictionary of reward components and the total scalar reward.
@@ -101,6 +105,14 @@ class RewardCalculator:
         progress = self._progress_velocity(current_state)
         lane_deviation_penalty = self._lane_deviation_penalty(current_state)
         heading_alignment = self._heading_alignment_reward(current_state)
+
+        # --- Calculate action smoothness penalty ---
+        smoothness_penalty = 0.0
+        if action is not None:
+            current_steering = float(action.get("steering", 0.0))
+            steering_change = abs(current_steering - self._previous_steering)
+            smoothness_penalty = -self._config.action_smoothness_coef * steering_change
+            self._previous_steering = current_steering
 
         # --- Apply command-specific shaping ---
         # Single-agent now includes lane deviation to encourage road-following
@@ -125,6 +137,7 @@ class RewardCalculator:
             "completion_bonus": completion_bonus,
             "waypoint_progress_bonus": waypoint_bonus,
             "idle_penalty": idle_penalty,
+            "action_smoothness": smoothness_penalty,
             # Applied every time step to push for efficiency
             "time_penalty": self._config.time_penalty,
         }

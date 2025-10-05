@@ -1,10 +1,17 @@
-# Reward Contract (Version 4.1)
+# Reward Contract (Version 4.2)
 
-**Last Updated**: 2025-10-04
+**Last Updated**: 2025-10-05
 
 This document outlines the reward shaping components for the AirSim HRL agent. The total reward is the sum of these components. The function adapts its shaping based on the active high-level command, with full support for single-agent (non-hierarchical) training.
 
-## Changes in Version 4.1 (Road-Following Fix)
+## Changes in Version 4.2 (Steering Smoothness)
+
+-   **Action smoothness penalty added**: Penalizes rapid steering changes to reduce zigzag behavior
+-   **Coefficient**: `action_smoothness_coef = 0.5` (tunable)
+-   **Formula**: `-0.5 * |steering[t] - steering[t-1]|`
+-   **Effect**: Encourages smooth, gradual turns instead of erratic oscillations
+
+### Historical Changes (Version 4.1 - Road-Following Fix)
 
 -   **Lane deviation added to single-agent**: Now includes `lane_deviation_penalty` in command shaping
 -   **Off-road termination**: Episodes end when `lane_mask_coverage_ratio < 0.2` (80% off-road)
@@ -65,10 +72,11 @@ These are the building blocks for the command-specific shaping rewards.
 
 These penalties apply in all situations to discourage universally undesirable behavior.
 
-| Component          | Value/Formula     | Trigger Condition                                 | Notes                                                                                                             |
-| :----------------- | :---------------- | :------------------------------------------------ | :---------------------------------------------------------------------------------------------------------------- |
-| **`idle_penalty`** | `-0.5`            | `speed_mps < 0.1` AND `progress_possible == True` | A small penalty to discourage the agent from stopping when it should be moving (e.g., on a clear, straight road). |
-| **`time_penalty`** | `-0.005` per step | Always                                            | Reduced per-timestep penalty to minimize constant drain while still incentivizing efficient completion.           |
+| Component               | Value/Formula                            | Trigger Condition                                 | Notes                                                                                                                                             |
+| :---------------------- | :--------------------------------------- | :------------------------------------------------ | :------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **`idle_penalty`**      | `-0.5`                                   | `speed_mps < 0.1` AND `progress_possible == True` | A small penalty to discourage the agent from stopping when it should be moving (e.g., on a clear, straight road).                                 |
+| **`action_smoothness`** | `-0.5 * \|steering[t] - steering[t-1]\|` | Always                                            | **NEW in v4.2**: Penalizes rapid steering changes to encourage smooth driving. Reduces zigzag behavior and lateral drift. Coefficient is tunable. |
+| **`time_penalty`**      | `-0.005` per step                        | Always                                            | Reduced per-timestep penalty to minimize constant drain while still incentivizing efficient completion.                                           |
 
 ---
 
@@ -76,23 +84,36 @@ These penalties apply in all situations to discourage universally undesirable be
 
 ### Per-Step Breakdown (Typical Single-Agent Episode)
 
-**Example**: Agent moving at 5 m/s toward waypoint with 80% alignment
+**Example**: Agent moving at 5 m/s toward waypoint with 80% alignment, small steering change
 
 ```
 progress_velocity = 5.0 * 0.8 * 2.0 = +8.0
 heading_alignment = 0.8 * 1.0 = +0.8
-command_shaping = 8.0 + 0.8 = +8.8
+lane_deviation = 0.0 (on road center)
+action_smoothness = -0.5 * 0.05 = -0.025 (small change)
+command_shaping = 8.0 + 0.8 + 0.0 = +8.8
 time_penalty = -0.005
-Total per step = +8.795
+Total per step = +8.77
 ```
 
-**Episode with 50 steps, 1 waypoint, collision**:
+**Episode with 50 steps, 1 waypoint, smooth driving**:
 
 ```
-Per-step rewards: +8.795 * 50 = +439.75
+Per-step rewards: +8.77 * 50 = +438.5
 Waypoint bonus: +50.0
-Collision penalty: -10.0
-Total episode reward: +479.75 ✓
+Total episode reward: +488.5 ✓
+```
+
+**Episode with 50 steps, 1 waypoint, erratic steering (avg change 0.8)**:
+
+```
+Per-step rewards (with large smoothness penalty):
+  progress + heading = +8.8
+  action_smoothness = -0.5 * 0.8 = -0.4 (per step)
+  time_penalty = -0.005
+  Total per step = +8.395
+Total: 8.395 * 50 + 50 = +469.75
+Penalty for erratic steering: -18.75 ❌
 ```
 
 Compare to hierarchical training (Version 3.0) where single-agent got:
@@ -127,8 +148,15 @@ Based on training performance, consider adjusting these parameters:
 
 ### If Agent Behavior Is Jerky
 
--   Add action smoothness penalty (future work)
--   Typical formula: `-smoothness_coef * |action[t] - action[t-1]|`
+-   **Increase `action_smoothness_coef`**: 0.5 → 1.0 (more strict)
+-   For very smooth driving: 0.5 → 2.0
+-   If too conservative (won't turn): 0.5 → 0.2
+-   Monitor: Average steering change per step should be < 0.3
+
+### If Agent Goes Off-Road Frequently
+
+-   Increase `lane_deviation_penalty_coef`: 1.0 → 2.0
+-   Reduce off-road termination threshold: 0.2 → 0.3 (more strict)
 
 ---
 

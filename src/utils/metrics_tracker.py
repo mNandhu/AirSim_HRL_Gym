@@ -82,6 +82,7 @@ class StepMetrics:
     completion_bonus: float = 0.0
     waypoint_progress_bonus: float = 0.0
     idle_penalty: float = 0.0
+    action_smoothness: float = 0.0
     time_penalty: float = 0.0
     position_xy: Optional[Tuple[float, float]] = None
     goal_xy: Optional[Tuple[float, float]] = None
@@ -248,6 +249,7 @@ class MetricsTracker:
             completion_bonus=reward_components.get("completion_bonus", 0.0),
             waypoint_progress_bonus=reward_components.get("waypoint_progress_bonus", 0.0),
             idle_penalty=reward_components.get("idle_penalty", 0.0),
+            action_smoothness=reward_components.get("action_smoothness", 0.0),
             time_penalty=reward_components.get("time_penalty", 0.0),
             position_xy=position_xy,
             goal_xy=goal_xy,
@@ -679,6 +681,7 @@ class MetricsTracker:
         completion_bonuses = [s.completion_bonus for s in steps_snapshot]
         waypoint_progress_bonuses = [s.waypoint_progress_bonus for s in steps_snapshot]
         idle_penalties = [s.idle_penalty for s in steps_snapshot]
+        action_smoothness = [s.action_smoothness for s in steps_snapshot]
         time_penalties = [s.time_penalty for s in steps_snapshot]
 
         # Speed over time (always first subplot)
@@ -799,20 +802,42 @@ class MetricsTracker:
             steps, waypoint_base, idle_base, alpha=0.7, label="Idle Penalty", color="gray"
         )
 
-        time_base = [
-            cs + cp + cb + wb + ip + tp
-            for cs, cp, cb, wb, ip, tp in zip(
+        smoothness_base = [
+            cs + cp + cb + wb + ip + sm
+            for cs, cp, cb, wb, ip, sm in zip(
                 command_shaping,
                 collision_penalties,
                 completion_bonuses,
                 waypoint_progress_bonuses,
                 idle_penalties,
+                action_smoothness,
+                strict=False,
+            )
+        ]
+        reward_ax.fill_between(
+            steps,
+            idle_base,
+            smoothness_base,
+            alpha=0.7,
+            label="Action Smoothness",
+            color="purple",
+        )
+
+        time_base = [
+            cs + cp + cb + wb + ip + sm + tp
+            for cs, cp, cb, wb, ip, sm, tp in zip(
+                command_shaping,
+                collision_penalties,
+                completion_bonuses,
+                waypoint_progress_bonuses,
+                idle_penalties,
+                action_smoothness,
                 time_penalties,
                 strict=False,
             )
         ]
         reward_ax.fill_between(
-            steps, idle_base, time_base, alpha=0.7, label="Time Penalty", color="black"
+            steps, smoothness_base, time_base, alpha=0.7, label="Time Penalty", color="black"
         )
 
         reward_ax.set_xlabel("Step")
@@ -1034,6 +1059,7 @@ class MetricsTracker:
                                 "collision_penalty": step.collision_penalty,
                                 "completion_bonus": step.completion_bonus,
                                 "idle_penalty": step.idle_penalty,
+                                "action_smoothness": step.action_smoothness,
                                 "time_penalty": step.time_penalty,
                             },
                         }

@@ -225,6 +225,7 @@ class AirSimEnv:
             telemetry,
             progress_possible=progress_possible,
             waypoint_reached=waypoint_reached,
+            action={"steering": target_steering},
         )
 
         terminated = self._check_terminated(telemetry)
@@ -274,6 +275,7 @@ class AirSimEnv:
         *,
         progress_possible: bool,
         waypoint_reached: bool = False,
+        action: dict[str, float] | None = None,
     ) -> tuple[dict[str, float], float]:
         current_state = self._vehicle_state_from_telemetry(current, previous=previous)
         active_command = self._command_context.name or ""
@@ -284,6 +286,7 @@ class AirSimEnv:
             command_completed=command_completed,
             progress_possible=progress_possible,
             waypoint_reached=waypoint_reached,
+            action=action,
         )
         # Command completion is single-use until re-armed
         if command_completed:
