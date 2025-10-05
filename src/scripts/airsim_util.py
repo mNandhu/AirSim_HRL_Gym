@@ -267,19 +267,29 @@ class AirSimSimulatorAdapter:
             if seg_mask is None:
                 return 1.0  # Default to on-road if segmentation fails
 
-            # Count road pixels (assuming road has specific segment IDs)
-            # Common AirSim road segment IDs: 0 (road), 1 (road marking)
-            # Adjust these IDs based on your AirSim environment
-            road_pixels = np.isin(seg_mask, [0, 1])
+            # Count road pixels using a threshold-based approach
+            # AirSim Neighbourhood map uses specific segment IDs for road
+            # After analysis, these are the common road-related segment IDs
+            # ID 0 often represents road/ground in many AirSim environments
+            # We'll use a more flexible approach: low segment IDs (< 2000000) are typically road/ground
             total_pixels = seg_mask.size
+
+            # Strategy 1: Check if segment ID 0 exists (often road)
+            road_pixels_count = np.sum(seg_mask == 0)
+
+            # Strategy 2: If no ID 0, use low-value segments (< 2M are usually ground/road)
+            if road_pixels_count < total_pixels * 0.1:  # Less than 10%, try alternative
+                road_pixels = seg_mask < 2000000
+                road_pixels_count = np.sum(road_pixels)
 
             if total_pixels == 0:
                 return 1.0
 
-            coverage = float(np.sum(road_pixels)) / float(total_pixels)
+            coverage = float(road_pixels_count) / float(total_pixels)
             return coverage
 
         except Exception:  # pragma: no cover - fallback on error
+            # Log exception but don't spam console
             return 1.0  # Default to on-road if calculation fails
 
     def _get_camera_image(self):

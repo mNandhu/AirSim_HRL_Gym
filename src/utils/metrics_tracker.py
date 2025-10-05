@@ -1024,6 +1024,7 @@ class MetricsTracker:
                             "speed_mps": step.speed_mps,
                             "distance_to_goal": step.distance_to_goal,
                             "collision": step.collision,
+                            "lane_mask_coverage_ratio": step.lane_mask_coverage_ratio,
                             "position_xy": list(step.position_xy)
                             if step.position_xy is not None
                             else None,
