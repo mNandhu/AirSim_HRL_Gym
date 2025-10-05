@@ -228,13 +228,20 @@ class AirSimEnv:
             action={"steering": target_steering},
         )
 
-        terminated = self._check_terminated(telemetry)
+        terminated, termination_reason = self._check_terminated(telemetry)
         truncated = self._check_truncated()
+
+        # Fix goal_reached to only be True when all waypoints reached
+        goal_reached = self._path_manager.all_waypoints_reached and not telemetry.get(
+            "collision", False
+        )
+
         done_flags = {
             "terminated": terminated,
             "truncated": truncated,
             "collision": bool(telemetry.get("collision", False)),
-            "goal_reached": terminated and not telemetry.get("collision", False),
+            "goal_reached": goal_reached,
+            "termination_reason": termination_reason,
         }
 
         observation = self._build_observation(sim_state, reward_components, done_flags)
@@ -332,18 +339,29 @@ class AirSimEnv:
             done_flags=done_flags,
         )
 
-    def _check_terminated(self, telemetry: Mapping[str, Any]) -> bool:
-        """Check if episode should terminate (collision, off-road, or all waypoints reached)."""
-        if telemetry.get("collision", False):
-            return True
+    def _check_terminated(self, telemetry: Mapping[str, Any]) -> tuple[bool, str]:
+        """Check if episode should terminate and return reason.
 
-        # NEW: Terminate if severely off-road (< 20% lane coverage)
+        Returns:
+            Tuple of (terminated: bool, reason: str)
+        """
+        if telemetry.get("collision", False):
+            return True, "collision"
+
+        # Terminate if severely off-road (< 20% lane coverage)
         lane_ratio = float(telemetry.get("lane_mask_coverage_ratio", 1.0))
         if lane_ratio < 0.2:  # Less than 20% on road
-            return True
+            return True, f"off_road (coverage={lane_ratio:.3f})"
 
         # Episode completes when all waypoints are reached
-        return self._path_manager.all_waypoints_reached
+        if self._path_manager.all_waypoints_reached:
+            waypoints_reached = self._path_manager.current_waypoint_index
+            return (
+                True,
+                f"success (reached {waypoints_reached}/{self._path_manager.total_waypoints} waypoints)",
+            )
+
+        return False, "active"
 
     def _check_truncated(self) -> bool:
         return self._step_index + 1 >= self._experiment.horizon

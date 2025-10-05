@@ -112,6 +112,7 @@ class EpisodeMetrics:
     # N = completed N waypoints, targeting waypoint N+1
     completed_successfully: bool = False
     collision_occurred: bool = False
+    termination_reason: str = "unknown"
 
     # Action statistics
     avg_target_speed: float = 0.0
@@ -317,12 +318,14 @@ class MetricsTracker:
                 # Remove the first (likely stale) sample
                 self.current_episode_positions.pop(0)
 
-    def finish_episode(self, completed_successfully: bool = False) -> None:
+    def finish_episode(
+        self, completed_successfully: bool = False, termination_reason: str = "unknown"
+    ) -> None:
         """Finish the current episode."""
         if self.current_episode is None:
             return
 
-        self._finish_episode(completed_successfully)
+        self._finish_episode(completed_successfully, termination_reason)
         # Force a synchronous update after episode completion so episode artifacts are current
         self._update_graphs()
         self._save_metrics()
@@ -334,7 +337,9 @@ class MetricsTracker:
         self.current_episode_positions = []
         self.current_target_xy = None
 
-    def _finish_episode(self, completed_successfully: bool = False) -> None:
+    def _finish_episode(
+        self, completed_successfully: bool = False, termination_reason: str = "unknown"
+    ) -> None:
         """Internal method to finish episode tracking."""
         if (
             not self.current_episode_steps
@@ -393,6 +398,7 @@ class MetricsTracker:
             max_waypoints_reached=max_waypoint_reached,
             collision_occurred=collision_occurred,
             completed_successfully=completed_successfully,
+            termination_reason=termination_reason,
             avg_target_speed=float(np.mean(target_speeds)) if target_speeds else 0.0,
             avg_target_steering_magnitude=float(np.mean(target_steerings))
             if target_steerings
@@ -425,6 +431,7 @@ class MetricsTracker:
         print(
             f"   Max Speed: {episode_metrics.max_speed:.1f} m/s | Min Distance: {episode_metrics.min_distance_to_goal:.1f}m{waypoint_info}"
         )
+        print(f"   Termination: {termination_reason}")
 
     def _update_graphs(self) -> None:
         """Update all visualization graphs."""
@@ -1025,6 +1032,7 @@ class MetricsTracker:
                         "min_distance_to_goal": ep.min_distance_to_goal,
                         "collision_occurred": ep.collision_occurred,
                         "completed_successfully": ep.completed_successfully,
+                        "termination_reason": ep.termination_reason,
                         "avg_target_speed": ep.avg_target_speed,
                         "avg_target_steering_magnitude": ep.avg_target_steering_magnitude,
                         "command_distribution": ep.command_distribution,

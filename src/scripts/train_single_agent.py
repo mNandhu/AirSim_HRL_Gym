@@ -111,7 +111,11 @@ class MetricsCallback(BaseCallback):
             flags = info.get("done_flags", {})
             success = bool(flags.get("goal_reached", False))
             collision = bool(flags.get("collision", False))
-            self._tracker.finish_episode(completed_successfully=success)
+            termination_reason = flags.get("termination_reason", "unknown")
+            self._tracker.finish_episode(
+                completed_successfully=success,
+                termination_reason=termination_reason,
+            )
 
             stats = {
                 "episode": self._episode_index + 1,
@@ -119,6 +123,7 @@ class MetricsCallback(BaseCallback):
                 "steps": self._episode_step,
                 "goal_reached": success,
                 "collision": collision,
+                "termination_reason": termination_reason,
                 "config_hash": info.get("config_hash"),
             }
             self._history.append(stats)
